@@ -9,7 +9,7 @@ Odysseus Portable reads a small set of environment variables at startup to confi
 ## Variable Reference
 
 <ParamField query="ODYSSEUS_BACKEND" type="string">
-  Selects the inference backend. Accepted values are `llama` (or its aliases `llamacpp` and `llama.cpp`) and `ollama`. When not set, the value from `data/launcher_config.json` is used; if that is also absent, the orchestrator prompts interactively and defaults to `llama`.
+  Selects the inference backend. Accepted values are `llama` (or its aliases `llamacpp` and `llama.cpp`) and `ollama`. When not set, the value from `data/launcher_config.json` is used; if that is also absent, the orchestrator defaults to `llama`.
 </ParamField>
 
 <ParamField query="ODYSSEUS_PORT" type="number">
@@ -45,7 +45,7 @@ Odysseus Portable reads a small set of environment variables at startup to confi
 </ParamField>
 
 <ParamField query="ODYSSEUS_ALLOW_SYSTEM_GIT" type="string">
-  Unix-only. Set to `1` to allow the orchestrator to use the host system's `git` executable instead of downloading a portable Git binary. On Linux and macOS the launcher already falls back to system `git` automatically when a portable binary is not present, but this flag makes the preference explicit.
+  Unix-only. Set to `1` to force the orchestrator to accept the host system's `git` executable even when the automatic availability check does not pass. On Linux and macOS the launcher already uses system `git` automatically when it detects a working installation; this flag is only needed in environments where the git binary exists but fails the default version probe.
 </ParamField>
 
 ---

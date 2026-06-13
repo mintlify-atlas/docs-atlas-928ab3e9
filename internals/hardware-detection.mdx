@@ -23,7 +23,7 @@ Before downloading a single binary, Odysseus Portable needs to know exactly what
 ```
 
 <Note>
-  `gpuMemoryGB` and `gpuFreeMemoryGB` are only populated for CUDA GPUs via `nvidia-smi`. Metal and Vulkan detection does not query VRAM, so those fields remain `0` for Apple Silicon and Vulkan devices. Context window sizing for those backends falls back to system RAM instead.
+  `gpuMemoryGB` and `gpuFreeMemoryGB` are only populated for CUDA GPUs via `nvidia-smi`. Metal and Vulkan detection does not query VRAM, so those fields remain `0` for Apple Silicon and Vulkan devices. Context window sizing for those backends falls back to `Math.max(4, Math.floor(hw.ramGB * 0.55))` — 55 % of system RAM with a 4 GB floor.
 </Note>
 
 ## OS and Architecture Detection
@@ -179,17 +179,22 @@ For CUDA on Linux, `getLlamaCppAssets` targets the `ai-dock/llama.cpp-cuda` repo
 
 Two inference parameters are derived directly from the hardware profile:
 
-**GPU layer offload (`ngl`)** — controls how many model layers are offloaded to the GPU. A CPU-only machine gets `ngl = 0`; any GPU backend gets `ngl = 99` (all layers):
+**GPU layer offload (`ngl`)** — controls how many model layers are offloaded to the GPU. A CPU-only machine gets `ngl = 0`; any recognised GPU backend (CUDA, Vulkan, or Metal) gets `ngl = 99` (all layers):
 
 ```javascript
-const ngl = hw.gpuBackend === 'cpu' ? 0 : 99;
+let ngl = 0;
+if (hw.gpuBackend === 'cuda' || hw.gpuBackend === 'vulkan' || hw.gpuBackend === 'metal') {
+  ngl = 99;
+  console.log('[Inference] GPU acceleration enabled (offloading all layers via -ngl 99).');
+} else {
+  console.log('[Inference] Running on CPU (0 layers offloaded).');
+}
 ```
 
-**Context window size** — the llama.cpp backend auto-calculates a safe context size based on available memory. The priority for the memory figure used in this calculation is:
+**Context window size** — the llama.cpp backend auto-calculates a safe context size based on available memory. The memory figure used in this calculation is selected as follows:
 
-1. `hw.gpuFreeMemoryGB` — free VRAM (CUDA only)
-2. `hw.gpuMemoryGB` — total VRAM if free VRAM is unavailable
-3. `hw.ramGB` — system RAM for CPU inference
+- **CPU inference** (`hw.gpuBackend === 'cpu'`): uses `hw.ramGB` directly.
+- **GPU inference** (CUDA / Vulkan / Metal): uses `hw.gpuFreeMemoryGB || hw.gpuMemoryGB || Math.max(4, Math.floor(hw.ramGB * 0.55))`. When both VRAM fields are zero (e.g. Metal, Vulkan without a query), the fallback is 55 % of system RAM capped at a minimum of 4 GB.
 
 <Tip>
   On machines with multiple CUDA GPUs, only the first GPU reported by `nvidia-smi` is used for VRAM calculations. If the other GPUs have significantly more free memory, consider setting `CUDA_VISIBLE_DEVICES` before launch to expose only the most capable GPU.

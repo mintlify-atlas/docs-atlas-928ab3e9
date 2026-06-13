@@ -89,7 +89,7 @@ function getBackendChoice(config) {
 }
 ```
 
-If none of the first three sources produces a value (which only happens when `config.backend` is unset and no env var or flag is present), the orchestrator falls through to an interactive prompt that asks the user to choose `[1] Ollama` or `[2] llama.cpp` and saves the answer to `launcher_config.json` for future launches.
+If none of the first three sources produces a value, `getBackendChoice()` returns the hard-coded string `'llama'` — it never returns a falsy value. An interactive prompt block guarded by `if (!backendChoice)` exists immediately after the call site in `main()`, but it is unreachable in practice because the function always returns either `'llama'` or `'ollama'`. The selected backend is always saved to `launcher_config.json` via `saveLauncherConfig({ backend: backendChoice })` regardless of which source resolved it.
 
 ## Combined Logging
 

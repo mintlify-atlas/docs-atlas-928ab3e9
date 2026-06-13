@@ -85,7 +85,7 @@ A dedicated GPU is entirely optional — CPU inference works on all platforms �
 </Accordion>
 
 <Accordion title="Subsequent launches (offline capable)">
-  After the initial bootstrap completes, Odysseus Portable runs fully offline. On startup, the orchestrator will attempt a `git pull --ff-only` on the Odysseus source directory to pick up upstream updates, but this is non-blocking — the launch proceeds normally if there is no network connection.
+  After the initial bootstrap completes, Odysseus Portable runs fully offline. On startup, the orchestrator will attempt a `git pull --ff-only` on the Odysseus source directory to pick up upstream updates, but this step is non-blocking — the launch proceeds normally if there is no network connection. The Python dependency install step is also re-run on each launch but reads from the cached portable environment and does not require internet access once packages are installed.
 </Accordion>
 
 <Accordion title="Hugging Face credentials (gated models only)">

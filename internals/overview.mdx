@@ -32,7 +32,7 @@ Odysseus Portable is built around a single Node.js orchestrator (`src/start.js`)
     Starting from the configured base values (web `7070`, proxy `8080`, llama `10086`), `findFreePort()` increments until a TCP connect check shows the port is unoccupied.
   </Step>
   <Step title="Determine backend choice">
-    Priority order: CLI flag `--backend=` → `ODYSSEUS_BACKEND` env var → saved config key → interactive prompt → default `llama`.
+    Priority order: CLI flag `--backend=` → `ODYSSEUS_BACKEND` env var → saved config key → default `'llama'`. The function always returns a value; an interactive prompt block exists in `main()` but is unreachable because `getBackendChoice()` never returns a falsy value.
   </Step>
   <Step title="Ensure Odysseus source (ensureOdysseusSource)">
     The Git bootstrap module checks whether `odysseus/` exists. If not, it clones from GitHub using a portable or system Git. If it does exist, it runs `git restore` on patch-managed files and then `git pull --ff-only` to pick up upstream changes.

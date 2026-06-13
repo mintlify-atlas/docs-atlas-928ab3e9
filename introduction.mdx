@@ -4,7 +4,7 @@ sidebarTitle: "Introduction"
 description: "Odysseus Portable bundles a full local AI workspace and llama.cpp inference into one self-contained folder — no installs, no admin rights, works offline."
 ---
 
-Odysseus Portable is a unified, 100% self-contained, offline-first AI agent workspace that requires zero system-level installation. It bundles the Odysseus web UI — a feature-rich, Claude/ChatGPT-like local interface with SQLite-backed memory, calendar integration, custom agents, and deep research capabilities — alongside a dynamic, hardware-optimized [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine. The entire stack lives in a single folder you can copy to a USB drive, external SSD, or any directory and run immediately on Windows, macOS, or Linux without administrator rights.
+Odysseus Portable is a unified, 100% self-contained, offline-first AI agent workspace that requires zero system-level installation. It bundles the [Odysseus web UI](https://github.com/pewdiepie-archdaemon/odysseus) — a feature-rich, Claude/ChatGPT-like local interface created by [pewdiepie-archdaemon](https://github.com/pewdiepie-archdaemon), with SQLite-backed memory, calendar integration, custom agents, and deep research capabilities — alongside a dynamic, hardware-optimized [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine. The entire stack lives in a single folder you can copy to a USB drive, external SSD, or any directory and run immediately on Windows, macOS, or Linux without administrator rights.
 
 ## What's Included
 
@@ -25,7 +25,11 @@ Odysseus Portable is a unified, 100% self-contained, offline-first AI agent work
 
 ## The Portability Guarantee
 
-Every byte Odysseus Portable writes stays inside the project folder. User data, SQLite databases, configuration files, cached model weights, session logs, and secrets never touch system directories, registries, or global environment variables. When you unplug the USB drive or delete the folder, nothing is left behind on the host machine. The launcher's self-contained portable Node.js 22 runtime, portable Python 3.12 environment, and llama-server binary are all downloaded into the project's `bin/` subdirectory on first run — not into system paths.
+Odysseus Portable keeps your user data, SQLite databases, configuration files, cached model weights, session logs, and secrets out of system directories and registries. When you unplug the USB drive or delete the folder, no configuration or data traces are left on the host machine. The launcher's portable Node.js 22 runtime and llama-server binary are downloaded into the project's `bin/` subdirectory on first run.
+
+<Note>
+  On macOS and Linux, the Python 3.12 virtual environment is created by `uv` at `~/.cache/odysseus-portable/envs/` in your home directory — outside the project folder. This is a platform constraint of Python virtual environments. All other data (models, databases, configuration, logs) remains inside the project folder. On Windows, the embedded Python environment is stored entirely within the project's `odysseus/bin/` directory.
+</Note>
 
 ## How It Works
 

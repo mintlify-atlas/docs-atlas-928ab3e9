@@ -21,7 +21,7 @@ The `data/` directory is created automatically if it does not exist. If `launche
 ## Supported Fields
 
 <ParamField body="backend" type="string">
-  Inference backend to use on every launch. Accepted values: `"llama"` or `"ollama"`. When this field is present and valid, the interactive backend-selection prompt is skipped entirely.
+  Inference backend to use on every launch. Accepted values: `"llama"` or `"ollama"`. When this field is present and valid, the backend is used directly without any further prompting.
 </ParamField>
 
 <ParamField body="webPort" type="number">
@@ -81,7 +81,7 @@ When the same setting is specified in multiple places, Odysseus Portable resolve
 </Steps>
 
 <Tip>
-  When you select a backend from the interactive prompt at startup, that choice is automatically written back to `data/launcher_config.json`. This means the prompt only appears once — on every subsequent launch the saved backend is used directly, skipping the question entirely.
+  When you launch Odysseus Portable for the first time without a `data/launcher_config.json`, the orchestrator defaults to the `llama` backend automatically. The selected backend is then written back to `data/launcher_config.json`, so subsequent launches use the saved value directly.
 </Tip>
 
 ---

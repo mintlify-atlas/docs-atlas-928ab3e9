@@ -29,10 +29,10 @@ Odysseus Portable is designed to be running in minutes regardless of your operat
         PowerShell is used internally for the Node.js bootstrap — no separate PowerShell window needs to be opened.
       </Step>
       <Step title="Wait for the first-run setup to complete">
-        On first launch, the orchestrator downloads portable Node.js, a Python 3.12 embedded environment, and a CUDA/Vulkan/CPU-optimized `llama-server.exe` binary — all into the `bin\` folder. A model selection prompt appears once downloads finish.
+        On first launch, the orchestrator downloads portable Node.js, a Python 3.12 embedded environment, and a CUDA/Vulkan/CPU-optimized `llama-server.exe` binary — all into the `bin\` folder. Setup completes automatically without user interaction.
       </Step>
-      <Step title="Select a model and open the UI">
-        Choose a model from the prompt, then navigate to `http://127.0.0.1:7070` in your browser. The orchestrator opens it automatically if your default browser is configured.
+      <Step title="Open the UI and log in">
+        The orchestrator opens `http://127.0.0.1:7070` in your default browser automatically once the Odysseus web server is ready.
 
         Log in with the default credentials: **admin / techjarves**.
       </Step>
@@ -61,8 +61,8 @@ Odysseus Portable is designed to be running in minutes regardless of your operat
 
         On Apple Silicon Macs, `start.sh` automatically selects the `arm64` Node.js binary and a Metal-accelerated `llama-server`. On Intel Macs, the `x64` variants are used instead.
       </Step>
-      <Step title="Select a model and open the UI">
-        On first run, select your model when prompted. The orchestrator then opens `http://127.0.0.1:7070` in your default browser automatically.
+      <Step title="Open the UI and log in">
+        The orchestrator opens `http://127.0.0.1:7070` in your default browser automatically once setup completes.
 
         Log in with the default credentials: **admin / techjarves**.
       </Step>
@@ -91,8 +91,8 @@ Odysseus Portable is designed to be running in minutes regardless of your operat
 
         The script detects your CPU architecture (`x64` or `arm64`) and downloads the matching Node.js tarball and llama-server binary. NVIDIA CUDA is detected via `nvidia-smi`; Vulkan is detected via the presence of `libvulkan.so.1` or `vulkaninfo`.
       </Step>
-      <Step title="Select a model and open the UI">
-        Choose a model from the prompt on first launch. The orchestrator opens `http://127.0.0.1:7070` via `xdg-open` automatically.
+      <Step title="Open the UI and log in">
+        The orchestrator opens `http://127.0.0.1:7070` via `xdg-open` automatically once setup completes.
 
         Log in with the default credentials: **admin / techjarves**.
       </Step>
@@ -132,14 +132,16 @@ The orchestrator runs a multi-stage bootstrap sequence the very first time you s
 
 ## Choosing an Inference Backend
 
-On first launch — or when no saved preference exists — you will be prompted to choose an inference backend:
+The orchestrator selects the **llama.cpp** backend by default when no saved preference, environment variable, or CLI flag is present. You can override this at any time using a CLI flag or environment variable.
+
+When the backend cannot be determined from a saved `data/launcher_config.json` config, an arg, or an environment variable, you will be prompted interactively:
 
 ```text
 Choose inference backend:
-  [1] Ollama    - webapp-managed downloads and model switching
-  [2] llama.cpp - portable GGUF llama-server (default)
+  [1] Ollama   - webapp-managed downloads and model switching
+  [2] llama.cpp - portable GGUF llama-server fallback
 
-Enter selection [1-2] (default 2 - llama.cpp):
+Enter selection [1-2] (default 1 - Ollama):
 ```
 
 | Option | Best For |

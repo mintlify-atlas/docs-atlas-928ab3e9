@@ -22,7 +22,7 @@ The llama.cpp backend is the most portable inference option in Odysseus. On firs
   </Step>
 
   <Step title="llama-server startup">
-    The orchestrator spawns `llama-server` with `--models-dir models/ --models-max 1 --parallel <N> --ctx-size <N> -ngl <ngl>`. GPU-accelerated systems receive `-ngl 99` to offload all layers; CPU-only systems receive `-ngl 0`. llama-server binds to port **10086**.
+    The orchestrator spawns `llama-server` with `--port 10086 --models-dir models/ --models-max 1 --parallel <N> --ctx-size <N> --threads 4 -ngl <ngl>`. GPU-accelerated systems receive `-ngl 99` to offload all layers; CPU-only systems receive `-ngl 0`. llama-server binds to port **10086**.
   </Step>
 
   <Step title="HTTP proxy on port 8080">
@@ -62,7 +62,7 @@ The backend tries context sizes in descending order until one fits:
 
 The `chooseAutoContext` function in `src/backends/llama/index.js` estimates the right starting point on the ladder before llama-server is even started:
 
-1. **Available memory** — reads free VRAM from `nvidia-smi` for CUDA, uses total RAM minus overhead for CPU.
+1. **Available memory** — For GPU backends, uses `gpuFreeMemoryGB` from `nvidia-smi` if available, falls back to `gpuMemoryGB`, then to `Math.max(4, floor(ramGB × 0.55))`. For CPU, uses `ramGB` directly. Overhead (2.5 GB for GPU, 2 GB for CPU) and the largest model size are then subtracted to arrive at `usableGB`.
 2. **Model size** — scans `models/` for `.gguf` files and finds the largest one.
 3. **KV cache estimate** — applies a GB-per-4096-tokens factor based on model size.
 4. **Parallel slots** — divides the estimated max context by the number of parallel slots.

@@ -1,7 +1,7 @@
 ---
-title: "Using Custom GGUF Models in Odysseus Portable"
+title: "Add Custom GGUF Models to Your Odysseus Portable Workspace"
 sidebarTitle: "Custom GGUF"
-description: "Add any GGUF model to Odysseus Portable by placing the file in the models folder — supports flat files, nested Hugging Face hub caches, and subfolder organization."
+description: "Add any GGUF model to Odysseus Portable by placing the file in the models folder — supports flat files, nested hub caches, and subfolder layouts."
 ---
 
 Odysseus Portable is not limited to its predefined model list. Because `llama-server` is configured to scan the entire `models/` folder recursively at startup, any valid GGUF file you place there — regardless of where it came from — is automatically registered and available for inference. This makes it straightforward to experiment with the latest community releases, fine-tuned variants, or private models you have converted yourself, without touching any configuration files.
