@@ -1,47 +1,182 @@
 ---
-title: "Quickstart"
-description: "Begin with a guide on the fastest path to a successful outcome"
+title: "Get Started with Odysseus Portable"
+sidebarTitle: "Quickstart"
+description: "Launch a fully local AI agent workspace on Windows, macOS, or Linux in four steps — no system installs or admin rights required."
 ---
 
-Describe how someone begins using your product. What is the first thing they need to do? Are there any prerequisites?
+Odysseus Portable is designed to be running in minutes regardless of your operating system. There is no installer, no system-level dependency to satisfy, and no administrator prompt — just download or clone the repository, run the startup script, and the orchestrator handles the rest. The steps below cover all three supported platforms.
 
-A quickstart should take someone from zero to using your product. They'll get a quick win and a sense of what they can accomplish.
+## Launch Instructions
 
-## Prerequisites
+<Tabs>
+  <Tab title="Windows">
+    <Steps>
+      <Step title="Download or clone the repository">
+        Download the project as a ZIP from GitHub and extract it, or clone it with Git into any directory or USB drive:
 
-Before you begin, you must have:
+        ```cmd
+        git clone https://github.com/techjarves/Odysseus-Portable.git
+        cd Odysseus-Portable
+        ```
+      </Step>
+      <Step title="Run the startup script">
+        Double-click `start.bat` in Windows Explorer, or open a Command Prompt in the project folder and run:
 
-- Requirement one (for example, Node.js 18+, a free account, an API key)
-- Requirement two (for example, a compatible device, a compatible browser, a compatible operating system)
+        ```cmd
+        start.bat
+        ```
 
-## Get started
+        PowerShell is used internally for the Node.js bootstrap — no separate PowerShell window needs to be opened.
+      </Step>
+      <Step title="Wait for the first-run setup to complete">
+        On first launch, the orchestrator downloads portable Node.js, a Python 3.12 embedded environment, and a CUDA/Vulkan/CPU-optimized `llama-server.exe` binary — all into the `bin\` folder. A model selection prompt appears once downloads finish.
+      </Step>
+      <Step title="Select a model and open the UI">
+        Choose a model from the prompt, then navigate to `http://127.0.0.1:7070` in your browser. The orchestrator opens it automatically if your default browser is configured.
+
+        Log in with the default credentials: **admin / techjarves**.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="macOS">
+    <Steps>
+      <Step title="Download or clone the repository">
+        Download the ZIP from GitHub and extract it, or clone with Git:
+
+        ```bash
+        git clone https://github.com/techjarves/Odysseus-Portable.git
+        cd Odysseus-Portable
+        ```
+      </Step>
+      <Step title="Open Terminal in the project directory">
+        Open Terminal and navigate to the folder where you extracted or cloned the project. If you opened Terminal from Finder, it will already be in the correct directory.
+      </Step>
+      <Step title="Grant execute permission and run">
+        Make the startup script executable, then launch it:
+
+        ```bash
+        chmod +x start.sh
+        ./start.sh
+        ```
+
+        On Apple Silicon Macs, `start.sh` automatically selects the `arm64` Node.js binary and a Metal-accelerated `llama-server`. On Intel Macs, the `x64` variants are used instead.
+      </Step>
+      <Step title="Select a model and open the UI">
+        On first run, select your model when prompted. The orchestrator then opens `http://127.0.0.1:7070` in your default browser automatically.
+
+        Log in with the default credentials: **admin / techjarves**.
+      </Step>
+    </Steps>
+  </Tab>
+  <Tab title="Linux">
+    <Steps>
+      <Step title="Download or clone the repository">
+        Clone the repository or download and extract the ZIP:
+
+        ```bash
+        git clone https://github.com/techjarves/Odysseus-Portable.git
+        cd Odysseus-Portable
+        ```
+      </Step>
+      <Step title="Open a terminal in the project directory">
+        Open any terminal emulator and `cd` into the project folder. The script requires `curl` or `wget` to be available on your `PATH` for the initial Node.js bootstrap.
+      </Step>
+      <Step title="Grant execute permission and run">
+        Make the startup script executable, then launch it:
+
+        ```bash
+        chmod +x start.sh
+        ./start.sh
+        ```
+
+        The script detects your CPU architecture (`x64` or `arm64`) and downloads the matching Node.js tarball and llama-server binary. NVIDIA CUDA is detected via `nvidia-smi`; Vulkan is detected via the presence of `libvulkan.so.1` or `vulkaninfo`.
+      </Step>
+      <Step title="Select a model and open the UI">
+        Choose a model from the prompt on first launch. The orchestrator opens `http://127.0.0.1:7070` via `xdg-open` automatically.
+
+        Log in with the default credentials: **admin / techjarves**.
+      </Step>
+    </Steps>
+  </Tab>
+</Tabs>
+
+---
+
+## What Happens on First Launch
+
+The orchestrator runs a multi-stage bootstrap sequence the very first time you start Odysseus Portable. Understanding each stage helps you diagnose slow starts or network errors.
 
 <Steps>
-  <Step title="Install">
-    Describe how to install your product or sign up.
-
-    ```bash
-    npm install your-package
-    ```
+  <Step title="Hardware scan">
+    The orchestrator reads your OS, CPU architecture, total RAM, and GPU. It probes `nvidia-smi` for CUDA GPUs, checks for `vulkan-1.dll` / `libvulkan.so.1` for Vulkan, and detects Apple Silicon automatically for Metal. The result determines which llama-server binary variant to download.
   </Step>
-  <Step title="Configure">
-    Describe any setup or configuration needed before first use.
-
-    ```bash
-    your-cli init
-    ```
+  <Step title="Runtime bootstrap">
+    Portable **Node.js 22.16.0** is downloaded from `nodejs.org` and extracted into `bin/node-<os>-<arch>/` (macOS/Linux) or `bin\node\` (Windows). A portable **Python 3.12** environment is set up — via `uv` virtual environment on macOS/Linux, or via the official embedded zip on Windows. The hardware-matched **llama-server** binary is also downloaded and cached in `bin/`. This step runs once; all assets are reused on subsequent launches.
   </Step>
-  <Step title="Run it">
-    Show the first thing a user does to see it working.
-
-    ```bash
-    your-cli start
-    ```
+  <Step title="Odysseus sync">
+    The orchestrator clones the Odysseus web application source from GitHub into the `odysseus/` directory. If the directory already exists, it fast-forwards with `git pull --ff-only` when an internet connection is available. After cloning, a series of self-healing patches are applied to the Odysseus source to enable Windows path support, portable model-directory routing, and Ollama integration in the Cookbook UI.
+  </Step>
+  <Step title="Backend start">
+    Python dependencies for Odysseus are installed (or verified) in the portable Python environment. The database is seeded with the default admin credentials, and the Cookbook state is configured to point at the project's `models/` folder. The selected inference backend — either `llama-server` or Ollama — is then started and the orchestrator waits for it to bind its port before proceeding.
+  </Step>
+  <Step title="Browser open">
+    Once the Odysseus web server is confirmed live on port 7070, the orchestrator opens `http://127.0.0.1:7070` in your default browser using `start` (Windows), `open` (macOS), or `xdg-open` (Linux).
   </Step>
 </Steps>
 
-<Tip>
-  Give people a way to get help. This could be a link to a support page, a chat with a customer support agent, or a forum for your product.
+<Note>
+  On subsequent launches, the runtime bootstrap step is skipped entirely because Node.js, Python, and llama-server are already cached in `bin/`. Startup is significantly faster after the first run.
+</Note>
 
-  Example: Need help? Reach out to us at [support@yourcompany.com](mailto:support@yourcompany.com).
-</Tip>
+---
+
+## Choosing an Inference Backend
+
+On first launch — or when no saved preference exists — you will be prompted to choose an inference backend:
+
+```text
+Choose inference backend:
+  [1] Ollama    - webapp-managed downloads and model switching
+  [2] llama.cpp - portable GGUF llama-server (default)
+
+Enter selection [1-2] (default 2 - llama.cpp):
+```
+
+| Option | Best For |
+|--------|----------|
+| **[1] Ollama** | Users who already have Ollama installed, or who prefer managing models through the Odysseus Cookbook web UI with one-click downloading and switching. |
+| **[2] llama.cpp** | Maximum portability. The bundled `llama-server` binary runs entirely from the project folder with no external dependencies. GGUF models are stored in `models/`. |
+
+### Pre-selecting a Backend
+
+You can skip the interactive prompt by passing a flag or setting an environment variable before launch:
+
+<CodeGroup>
+```bash CLI flag (macOS/Linux)
+./start.sh --backend=llama
+./start.sh --backend=ollama
+```
+
+```cmd CLI flag (Windows)
+start.bat --backend=llama
+start.bat --backend=ollama
+```
+
+```bash Environment variable (macOS/Linux)
+export ODYSSEUS_BACKEND=llama
+./start.sh
+```
+
+```cmd Environment variable (Windows)
+set ODYSSEUS_BACKEND=ollama
+start.bat
+```
+</CodeGroup>
+
+Your selection is persisted to `data/launcher_config.json` and used as the default on all future launches — no re-prompting unless you delete that file.
+
+---
+
+<Warning>
+  **Change the default admin password after first login.** The default credentials (`admin` / `techjarves`) are publicly documented. Open the user profile settings in the Odysseus web UI and set a strong password before using the workspace on any shared or networked machine.
+</Warning>

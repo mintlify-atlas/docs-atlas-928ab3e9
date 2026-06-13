@@ -1,0 +1,90 @@
+---
+title: "Choosing an Inference Backend for Odysseus"
+sidebarTitle: "Overview"
+description: "Odysseus Portable supports two local inference backends — llama.cpp and Ollama. Learn the differences to pick the right one for your workflow."
+---
+
+Odysseus Portable ships with two fully offline inference backends: **llama.cpp** and **Ollama**. Both run entirely on your machine without sending data to any external service, but they differ in how they acquire models, which GPU runtimes they support, and how much control they give you over memory usage. Understanding these differences lets you pick the right engine from the start — and switch later if your needs change.
+
+## Backend Comparison
+
+| Feature | llama.cpp | Ollama |
+|---|---|---|
+| Model format | GGUF files in `models/` folder | Pulled via `ollama pull` |
+| Model storage | `models/` inside project folder | `models/ollama/` inside project folder |
+| API endpoint | `http://127.0.0.1:8080/v1` (proxy) | `http://127.0.0.1:11434/v1` |
+| Context auto-scaling | Yes — retries with smaller context on OOM | No |
+| GPU support | CUDA, Vulkan, Metal, CPU | CUDA, Metal, CPU |
+| Best for | Portable GGUF files, USB drives | Convenient model management via web UI |
+
+## Selecting a Backend
+
+Odysseus Portable gives you four ways to choose your backend, from most ephemeral to most persistent.
+
+<Steps>
+  <Step title="Interactive prompt on first launch">
+    When no configuration exists yet, the launcher presents a menu at startup. Enter the number for the backend you want:
+
+    ```text
+    [1] Ollama
+    [2] llama.cpp
+    ```
+
+    Your choice is saved to `data/launcher_config.json` so it persists across future launches.
+  </Step>
+
+  <Step title="CLI flag">
+    Pass `--backend=` when invoking the start script to override whatever is stored in config:
+
+    <CodeGroup>
+      ```bash Linux/macOS - llama.cpp
+      ./start.sh --backend=llama
+      ```
+
+      ```bash Linux/macOS - Ollama
+      ./start.sh --backend=ollama
+      ```
+
+      ```cmd Windows - llama.cpp
+      start.bat --backend=llama
+      ```
+
+      ```cmd Windows - Ollama
+      start.bat --backend=ollama
+      ```
+    </CodeGroup>
+  </Step>
+
+  <Step title="Environment variable">
+    Set `ODYSSEUS_BACKEND` before running the launcher. This is useful in scripts or CI-like environments where you don't want to modify any files:
+
+    ```bash
+    ODYSSEUS_BACKEND=llama ./start.sh
+    # or
+    ODYSSEUS_BACKEND=ollama ./start.sh
+    ```
+  </Step>
+
+  <Step title="Persistent config file">
+    Edit `data/launcher_config.json` directly to set a permanent default. The launcher reads this file on every start:
+
+    ```json
+    {
+      "backend": "llama"
+    }
+    ```
+
+    Replace `"llama"` with `"ollama"` to switch. CLI flags and environment variables still take precedence over this file.
+  </Step>
+</Steps>
+
+## Which Backend Should I Use?
+
+<CardGroup cols={2}>
+  <Card title="llama.cpp" icon="microchip" href="/backends/llama-cpp">
+    Best when you need maximum portability — copy the entire project folder to a USB drive, external SSD, or another machine and everything works out of the box. The built-in context auto-scaling means it gracefully handles low-VRAM situations by automatically stepping down to a smaller context window instead of crashing. Supports CUDA, Vulkan, Metal, and CPU.
+  </Card>
+  <Card title="Ollama" icon="box" href="/backends/ollama">
+    Best when you prefer a polished model-management experience. Use the Cookbook/Models section in the Odysseus web UI to browse, pull, and switch models without leaving the browser. Ollama's library covers a broad range of quantised models and its familiar CLI is well-documented. Supports CUDA, Metal, and CPU.
+  </Card>
+</CardGroup>

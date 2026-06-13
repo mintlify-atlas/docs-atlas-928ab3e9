@@ -1,0 +1,107 @@
+---
+title: "Odysseus Portable Environment Variables Reference"
+sidebarTitle: "Env Variables"
+description: "All environment variables recognized by Odysseus Portable — control ports, inference backend, context size, admin credentials, and parallel slots."
+---
+
+Odysseus Portable reads a small set of environment variables at startup to configure ports, select the inference backend, tune context window size, and seed admin credentials. Every variable has a sensible built-in default, so you only need to set the ones you want to change. Environment variables always take precedence over values stored in `data/launcher_config.json`, and CLI flags (e.g., `--backend=llama`) take precedence over both — making it easy to mix persistent defaults with one-off overrides.
+
+## Variable Reference
+
+<ParamField query="ODYSSEUS_BACKEND" type="string">
+  Selects the inference backend. Accepted values are `llama` (or its aliases `llamacpp` and `llama.cpp`) and `ollama`. When not set, the value from `data/launcher_config.json` is used; if that is also absent, the orchestrator prompts interactively and defaults to `llama`.
+</ParamField>
+
+<ParamField query="ODYSSEUS_PORT" type="number">
+  Port for the Odysseus web UI. Default: `7070`. If the requested port is already occupied, the orchestrator automatically increments to the next free port.
+</ParamField>
+
+<ParamField query="ODYSSEUS_PROXY_PORT" type="number">
+  Port for the API proxy server that sits between the web UI and the inference backend. Default: `8080`. Auto-increments if unavailable.
+</ParamField>
+
+<ParamField query="ODYSSEUS_LLAMA_PORT" type="number">
+  Port used by the `llama-server` process (llama.cpp backend only). Default: `10086`. Auto-increments if unavailable.
+</ParamField>
+
+<ParamField query="ODYSSEUS_LLAMA_CTX" type="number">
+  Forces a specific context window size (number of tokens) for `llama-server`. When unset, the orchestrator auto-calculates an appropriate size based on available GPU/RAM, model size, and the number of parallel slots. Set this only when you need to override the automatic selection.
+</ParamField>
+
+<ParamField query="ODYSSEUS_LLAMA_PARALLEL" type="number">
+  Number of parallel inference slots to initialise in `llama-server`. More slots allow simultaneous requests but consume additional memory proportionally. Default: `1`.
+</ParamField>
+
+<ParamField query="ODYSSEUS_ADMIN_USER" type="string">
+  Admin username seeded into the Odysseus database during the first-time setup step. Default: `admin`. Changing this after the database has already been created has no effect — update the credential from within the web UI instead.
+</ParamField>
+
+<ParamField query="ODYSSEUS_ADMIN_PASSWORD" type="string">
+  Admin password seeded into the Odysseus database during setup. Default: `techjarves`.
+
+  <Warning>
+    Change the default password from the user profile settings inside the web UI after your first sign-in. Never leave the default credential in place on a shared or networked machine.
+  </Warning>
+</ParamField>
+
+<ParamField query="ODYSSEUS_ALLOW_SYSTEM_GIT" type="string">
+  Unix-only. Set to `1` to allow the orchestrator to use the host system's `git` executable instead of downloading a portable Git binary. On Linux and macOS the launcher already falls back to system `git` automatically when a portable binary is not present, but this flag makes the preference explicit.
+</ParamField>
+
+---
+
+## Setting Variables Before Launch
+
+<Tabs>
+  <Tab title="Linux / macOS">
+    Prefix variables inline on the same line as the start command:
+
+    ```bash
+    ODYSSEUS_BACKEND=llama ODYSSEUS_PORT=8000 ./start.sh
+    ```
+
+    Or export them for the session:
+
+    ```bash
+    export ODYSSEUS_BACKEND=llama
+    export ODYSSEUS_PORT=8000
+    export ODYSSEUS_LLAMA_PARALLEL=2
+    ./start.sh
+    ```
+  </Tab>
+  <Tab title="Windows (Command Prompt)">
+    Use `set` before calling the launcher:
+
+    ```bat
+    set ODYSSEUS_BACKEND=llama
+    set ODYSSEUS_PORT=8000
+    set ODYSSEUS_LLAMA_PARALLEL=2
+    start.bat
+    ```
+  </Tab>
+  <Tab title="Windows (PowerShell)">
+    Assign to `$env:` variables before calling the launcher:
+
+    ```powershell
+    $env:ODYSSEUS_BACKEND = "llama"
+    $env:ODYSSEUS_PORT = "8000"
+    $env:ODYSSEUS_LLAMA_PARALLEL = "2"
+    .\start.bat
+    ```
+  </Tab>
+</Tabs>
+
+---
+
+## Precedence Order
+
+Environment variables sit in the middle of a three-tier configuration hierarchy:
+
+1. **CLI flags** (e.g., `--backend=llama`) — highest priority, override everything
+2. **Environment variables** (e.g., `ODYSSEUS_BACKEND=llama`) — override the config file
+3. **`data/launcher_config.json`** — persisted defaults, loaded at startup
+4. **Built-in defaults** — lowest priority, used when nothing else is set
+
+<Note>
+  For settings you want to persist across every launch without typing environment variables each time, write them to `data/launcher_config.json` instead. See the [Launcher Config](/configuration/launcher-config) page for details.
+</Note>

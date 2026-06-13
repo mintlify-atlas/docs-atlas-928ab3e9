@@ -1,0 +1,93 @@
+---
+title: "Predefined GGUF Models Available for Download"
+sidebarTitle: "Predefined Models"
+description: "Odysseus Portable ships with a curated list of GGUF models from Hugging Face covering coding, reasoning, and general chat across different hardware tiers."
+---
+
+Odysseus Portable comes pre-configured with a hand-picked set of GGUF models that cover the most common use cases — coding assistance, reasoning, and general-purpose chat — across a wide range of hardware. On the first launch with the llama.cpp backend, or any time the `models/` folder is empty, the orchestrator pauses at the terminal and presents an interactive numbered menu. The menu shows any locally detected GGUF files first, followed by the full predefined download list. Selecting a download option streams the file directly from Hugging Face into your `models/` folder before `llama-server` is started.
+
+## Predefined Model List
+
+The full list below is sourced directly from `src/model.js` in the Odysseus Portable codebase. Every entry represents a Q4\_K\_M quantization hosted on Hugging Face, selected for their balance of capability and download size.
+
+| Model | Hugging Face Repo | Quantization | Size | Best For |
+|---|---|---|---|---|
+| Qwen 2.5 Coder 0.5B Instruct | `Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF` | Q4\_K\_M | 0.38 GB | Super light, quick testing |
+| Qwen 2.5 Coder 1.5B Instruct | `Qwen/Qwen2.5-Coder-1.5B-Instruct-GGUF` | Q4\_K\_M | 1.2 GB | Ultra-fast coding, light devices |
+| Qwen 2.5 Coder 7B Instruct | `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF` | Q4\_K\_M | 4.7 GB | Best for development |
+| DeepSeek R1 Distill Qwen 1.5B | `unsloth/DeepSeek-R1-Distill-Qwen-1.5B-GGUF` | Q4\_K\_M | 1.1 GB | Fast reasoning, light devices |
+| DeepSeek R1 Distill Qwen 7B | `unsloth/DeepSeek-R1-Distill-Qwen-7B-GGUF` | Q4\_K\_M | 4.7 GB | High-performance reasoning |
+| Llama 3.2 3B Instruct | `unsloth/Llama-3.2-3B-Instruct-GGUF` | Q4\_K\_M | 2.0 GB | Balanced general intelligence |
+| Llama 3 8B Instruct | `unsloth/llama-3-8b-Instruct-gguf` | Q4\_K\_M | 4.9 GB | Standard general model |
+
+<Tip>
+  Q4\_K\_M is an excellent default — it offers a strong balance between file size and generation quality for everyday use. If you are extremely constrained on storage or RAM, try **Q2\_K** for the smallest possible footprint. For better output fidelity at the cost of a larger file, consider **Q6\_K** or **Q8\_0** quantizations downloaded manually.
+</Tip>
+
+## How the Selection Menu Works
+
+When the CLI menu appears, the orchestrator:
+
+1. Scans `models/` recursively for any `.gguf` files already present and lists them as `Local Model:` entries at the top.
+2. Appends all predefined download entries. If a predefined model's filename is already found locally, it is marked `(Already Downloaded)` and **will not be re-downloaded** if selected — the existing file is used directly.
+3. Prompts you to enter a number. If a default model was previously used, its entry is highlighted and pressing Enter without typing accepts it.
+
+```text
+========================================================
+             PORTABLE LOCAL LLM LAUNCHER
+========================================================
+Scanning 'models/'...
+Tip: You can drag and drop any GGUF file into the 'models' folder.
+========================================================
+[1] Local Model: my-custom-model.gguf (3.21 GB)
+[2] Download: Qwen 2.5 Coder 0.5B Instruct (Q4_K_M) - Super light... (0.38 GB)
+[3] Download: Qwen 2.5 Coder 7B Instruct (Q4_K_M) - Best for development (4.7 GB) (Already Downloaded)
+...
+========================================================
+Enter selection [1-8]:
+```
+
+<Note>
+  The predefined list is just a starting point. Any GGUF model from any source can be used by placing it in the `models/` folder manually. See [Custom GGUF Models](/models/custom-gguf) for details.
+</Note>
+
+## Recommended Models by Hardware Tier
+
+<AccordionGroup>
+  <Accordion title="Low-end hardware (4–8 GB RAM, no dedicated GPU)">
+    On CPU-only machines or systems with less than 8 GB of RAM, the smaller models keep inference responsive and avoid out-of-memory crashes.
+
+    **Recommended picks:**
+    - **Qwen 2.5 Coder 0.5B Instruct** (0.38 GB) — the lightest option, ideal for quick code completions and testing on very constrained hardware.
+    - **DeepSeek R1 Distill Qwen 1.5B** (1.1 GB) — a reasoning-capable model at a size that fits comfortably in 4 GB of RAM.
+  </Accordion>
+  <Accordion title="Mid-range hardware (8–16 GB RAM or entry-level GPU)">
+    Systems with 8–16 GB of RAM, or a GPU with 6–8 GB VRAM, can run the 1.5B–3B range comfortably and get noticeably better output quality.
+
+    **Recommended picks:**
+    - **Qwen 2.5 Coder 1.5B Instruct** (1.2 GB) — fast coding assistance with a small memory footprint.
+    - **Llama 3.2 3B Instruct** (2.0 GB) — well-rounded general chat and reasoning.
+    - **DeepSeek R1 Distill Qwen 1.5B** (1.1 GB) — structured reasoning tasks at low cost.
+  </Accordion>
+  <Accordion title="High-end hardware (16+ GB RAM or 8+ GB VRAM)">
+    With a modern GPU or a system with 16 GB or more of RAM, the 7B–8B models run efficiently and deliver near-frontier quality for local inference.
+
+    **Recommended picks:**
+    - **Qwen 2.5 Coder 7B Instruct** (4.7 GB) — the top choice for serious coding work, with deep language and tool-use capabilities.
+    - **DeepSeek R1 Distill Qwen 7B** (4.7 GB) — best-in-class reasoning at the 7B scale.
+    - **Llama 3 8B Instruct** (4.9 GB) — a reliable general-purpose model for chat, summarisation, and agent tasks.
+  </Accordion>
+</AccordionGroup>
+
+## Model Sources
+
+All predefined models are hosted on [Hugging Face](https://huggingface.co) and downloaded directly over HTTPS. No third-party relay or proxy is involved. Downloads are stored in `models/` and remain entirely local to your Odysseus Portable workspace — nothing is sent to external services during inference.
+
+<CardGroup cols={2}>
+  <Card title="Qwen Models" icon="code" href="https://huggingface.co/Qwen">
+    The Qwen 2.5 Coder series from Alibaba is optimized for code generation and completion tasks across multiple languages.
+  </Card>
+  <Card title="DeepSeek & Llama via unsloth" icon="brain" href="https://huggingface.co/unsloth">
+    The unsloth organization on Hugging Face provides well-maintained GGUF quantizations of DeepSeek R1 Distill and Llama models.
+  </Card>
+</CardGroup>

@@ -1,0 +1,160 @@
+---
+title: "Run Odysseus Portable from a USB Drive"
+sidebarTitle: "USB Setup"
+description: "Set up Odysseus Portable on a USB drive or external SSD to carry your full local AI workspace between machines without leaving any trace on the host."
+---
+
+Odysseus Portable is designed from the ground up to live on removable storage. Every runtime, model file, database, and configuration is kept inside the project folder — nothing is written to the host system's user directories, registry, or global paths. Plug in your drive, run the startup script, and your entire AI workspace is available. Unplug it, and the host machine is left exactly as you found it.
+
+## Recommended Drive Specifications
+
+Before copying Odysseus Portable to a drive, make sure it meets the minimum specs for a usable experience. Model inference is disk-I/O bound at startup: a slow drive will cause long load times even with a powerful GPU.
+
+| Specification | Minimum | Recommended |
+|---|---|---|
+| **Capacity** | 8 GB | 64–128 GB |
+| **Interface** | USB 3.0 | USB 3.1, USB 3.2, or SSD enclosure |
+| **Filesystem** | FAT32 / exFAT | exFAT (cross-platform) or NTFS (Windows) |
+
+<Note>
+  USB 2.0 drives will work but are noticeably slow when loading large GGUF model files (4–8 GB). A USB 3.1 flash drive or an SSD in a USB-C enclosure is the most reliable choice for everyday use.
+</Note>
+
+## Filesystem Compatibility
+
+Odysseus Portable runs on all common filesystems. The only restriction is symbolic link support — exFAT and FAT32 do not allow symlinks. The orchestrator detects this automatically and falls back to hardlinks or file copies, so model scanning and linking still work correctly.
+
+| Filesystem | OS Support | Symlinks | Notes |
+|---|---|---|---|
+| **NTFS** | Windows (native), macOS/Linux (read/write with drivers) | ✅ | Best choice for Windows-only drives |
+| **exFAT** | Windows, macOS, Linux | ❌ | Best cross-platform choice; hardlink fallback is automatic |
+| **APFS** | macOS only | ✅ | Use for macOS-dedicated drives |
+| **ext4** | Linux native | ✅ | Use for Linux-dedicated drives |
+
+## Setting Up the Drive
+
+<Steps>
+  <Step title="Format the drive">
+    Choose a filesystem that matches your usage pattern. For a drive you'll plug into multiple operating systems, **exFAT** is the safest choice. For a Windows-only drive, **NTFS** gives you full symlink support.
+
+    <Tabs>
+      <Tab title="Windows">
+        Open **File Explorer**, right-click the drive, select **Format**, choose **exFAT** or **NTFS**, and click **Start**.
+      </Tab>
+      <Tab title="macOS">
+        Open **Disk Utility**, select the drive, click **Erase**, choose **ExFAT** (for cross-platform) or **APFS** (macOS-only), and click **Erase**.
+      </Tab>
+      <Tab title="Linux">
+        ```bash
+        # Replace /dev/sdX with your actual drive device
+        sudo mkfs.exfat /dev/sdX1    # cross-platform
+        # or
+        sudo mkfs.ext4 /dev/sdX1     # Linux-only, full symlink support
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Copy Odysseus Portable to the drive">
+    Clone the repository directly onto the mounted drive, or copy the folder manually after cloning it elsewhere.
+
+    ```bash
+    # Replace /Volumes/MyDrive with your drive's mount point
+    git clone https://github.com/techjarves/Odysseus-Portable.git /Volumes/MyDrive/Odysseus-Portable
+    ```
+
+    If you don't have Git available, download the ZIP from GitHub and extract it to the drive manually.
+  </Step>
+
+  <Step title="Run the startup script">
+    Navigate to the `Odysseus-Portable` folder on your drive and launch the appropriate script for your operating system.
+
+    <Tabs>
+      <Tab title="Windows">
+        Double-click `start.bat`, or run it from Command Prompt:
+
+        ```cmd
+        start.bat
+        ```
+      </Tab>
+      <Tab title="macOS">
+        Open a terminal, navigate to the drive, and run:
+
+        ```bash
+        chmod +x start.sh
+        ./start.sh
+        ```
+      </Tab>
+      <Tab title="Linux">
+        Open a terminal, navigate to the drive, and run:
+
+        ```bash
+        chmod +x start.sh
+        ./start.sh
+        ```
+      </Tab>
+    </Tabs>
+  </Step>
+
+  <Step title="Wait for the first-run download">
+    On the first launch, the orchestrator downloads Node.js, Python, and a hardware-matched `llama-server` binary directly into the drive folder. This is a one-time operation — subsequent launches skip downloads if the files are already present.
+
+    <Note>
+      First-run downloads typically range from 200 MB to 1.5 GB depending on your GPU backend. Ensure you have a stable internet connection for this step.
+    </Note>
+  </Step>
+
+  <Step title="Sign in and start using Odysseus">
+    Once the orchestrator prints **"Odysseus is ready and active"**, your browser will open automatically to `http://127.0.0.1:7070`. Sign in with the default credentials (username: `admin`, password: `techjarves`) and begin downloading models via the Cookbook tab.
+  </Step>
+</Steps>
+
+## Multi-Machine Usage
+
+The orchestrator creates OS- and architecture-specific subdirectories inside `bin/`, so the same drive can be plugged into different machines without overwriting each other's cached binaries.
+
+| Directory | Contents |
+|---|---|
+| `bin/node-linux-x64/` | Node.js runtime for Linux x64 |
+| `bin/node-linux-arm64/` | Node.js runtime for Linux ARM64 |
+| `bin/node-darwin-arm64/` | Node.js runtime for macOS Apple Silicon |
+| `bin/node-darwin-x64/` | Node.js runtime for macOS Intel |
+| `bin/node/` | Node.js runtime for Windows |
+| `bin/llama-linux-x64/` | llama-server binary for Linux x64 |
+| `bin/llama-macos-arm64/` | llama-server binary for macOS ARM64 |
+| `bin/llama/` | llama-server binary for Windows |
+
+<Tip>
+  If you regularly move the drive between a Windows machine and a MacBook, both sets of binaries will be cached after each OS has launched Odysseus once. After that, both machines start instantly without re-downloading anything.
+</Tip>
+
+## What Stays on the Drive
+
+The data portability guarantee means that every piece of user data and configuration lives inside the project folder. Nothing is written to the host system's home directory, registry, or application support paths.
+
+<CardGroup cols={2}>
+  <Card title="models/" icon="database">
+    GGUF model files downloaded through the Cookbook tab. These are the largest files on the drive.
+  </Card>
+  <Card title="odysseus/data/" icon="table">
+    SQLite databases for chat history, calendar entries, and custom agent definitions.
+  </Card>
+  <Card title="data/launcher_config.json" icon="sliders">
+    Launcher settings including your chosen backend, port preferences, and saved configuration.
+  </Card>
+  <Card title="odysseus/.env" icon="key">
+    Your Hugging Face token (if configured) for downloading gated or private models.
+  </Card>
+  <Card title="bin/" icon="microchip">
+    Cached Node.js, Python, uv, tmux, and llama-server binaries for each platform you've used.
+  </Card>
+  <Card title="logs/" icon="file-lines">
+    Session logs (`combined_<timestamp>.log`) created on each launch and cleared on the next.
+  </Card>
+</CardGroup>
+
+## Security on Shared Machines
+
+<Warning>
+  While all data stays on the drive, the Odysseus and llama-server processes **are visible** in the host system's task manager or process list while running. The web UI binds exclusively to `127.0.0.1` (localhost) and is not accessible from other devices on the network, but any local user on the machine could connect to the port while the app is active. Always close the application by pressing **Ctrl+C** in the terminal before handing off a shared computer.
+</Warning>

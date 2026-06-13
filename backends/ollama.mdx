@@ -1,0 +1,131 @@
+---
+title: "Ollama Backend: Managed Model Downloads in Odysseus"
+sidebarTitle: "Ollama"
+description: "The Ollama backend provides portable Ollama binaries with models stored in the project folder, integrating with the Odysseus web UI for model management."
+---
+
+The Ollama backend gives you a familiar, polished model-management experience while keeping everything self-contained inside the Odysseus project folder. On first launch, the orchestrator downloads a platform-specific Ollama binary from the official Ollama GitHub release and extracts it to `bin/ollama-<os>-<arch>/`. It then starts `ollama serve` with `OLLAMA_MODELS` pointed at `models/ollama/` inside your project root, so model data never spills into a system-level installation. The Odysseus web UI connects to `http://127.0.0.1:11434/v1` and surfaces the Cookbook/Models section for pulling and managing models without leaving the browser.
+
+## How It Works
+
+<Steps>
+  <Step title="Binary acquisition">
+    `ensureOllamaExecutable(binDir)` in `src/backends/ollama/index.js` checks whether a binary already exists in `bin/ollama-<os>-<arch>/` (or `bin/ollama/` on Windows). If not, it queries the Ollama GitHub Releases API at `https://api.github.com/repos/ollama/ollama/releases/latest`, downloads the correct archive for your platform, and extracts it. The archive is removed after extraction.
+  </Step>
+
+  <Step title="Port detection">
+    Before starting a new process, the orchestrator checks whether port **11434** is already open using `isPortOpen(11434)`. If an existing Ollama instance is detected, it is reused and no new process is spawned. See [Coexistence with system Ollama](#coexistence-with-system-ollama) for details.
+  </Step>
+
+  <Step title="ollama serve startup">
+    If port 11434 is free, the orchestrator spawns `ollama serve` with two critical environment variables set:
+
+    ```bash
+    OLLAMA_HOST=127.0.0.1:11434
+    OLLAMA_MODELS=<projectRoot>/models/ollama/
+    ```
+
+    This binds Ollama to localhost only and redirects all model storage to the project folder.
+  </Step>
+
+  <Step title="Endpoint registration">
+    After Ollama is ready, the orchestrator calls `listOllamaModels()` to enumerate already-installed models and registers the endpoint (`http://127.0.0.1:11434/v1`) with the Odysseus web UI via `seedPortableEndpoint`. Any models found are immediately available in the UI model selector.
+  </Step>
+</Steps>
+
+## Ollama Binary Downloads
+
+The asset downloaded depends on your operating system and CPU architecture:
+
+| Platform | Architecture | Asset |
+|---|---|---|
+| Windows | x64 | `ollama-windows-amd64.zip` |
+| Windows | ARM64 | `ollama-windows-arm64.zip` |
+| macOS | any | `ollama-darwin.tgz` |
+| Linux | x64 | `ollama-linux-amd64.tar.zst` |
+| Linux | ARM64 | `ollama-linux-arm64.tar.zst` |
+
+<Note>
+  Like the llama.cpp binary, the Ollama binary is downloaded once and cached. Subsequent launches reuse the existing binary and skip the download step entirely.
+</Note>
+
+## Model Storage
+
+All models pulled through Odysseus Portable's Ollama backend are stored in **`models/ollama/`** inside the project folder. This is enforced by setting the `OLLAMA_MODELS` environment variable when spawning `ollama serve`:
+
+```bash
+OLLAMA_HOST=127.0.0.1:11434
+OLLAMA_MODELS=/path/to/project/models/ollama/
+```
+
+Because model data stays inside the project folder, you can move or copy the entire Odysseus directory — including its models — to another machine and have them immediately available.
+
+<Warning>
+  Ollama model files are significantly larger than their GGUF equivalents for the same parameter count, because Ollama bundles additional metadata and may store multiple quantisation levels. Monitor the size of `models/ollama/` regularly — it can fill a drive quickly if you pull several large models.
+</Warning>
+
+## Pulling Models
+
+<Tabs>
+  <Tab title="Web UI">
+    Open the Odysseus web UI and navigate to **Cookbook → Models**. From there you can search the Ollama library, pull a model with a single click, and monitor download progress — all without leaving the browser.
+  </Tab>
+  <Tab title="Bundled Ollama CLI">
+    Use the bundled binary directly from its extraction directory. This is useful for scripting or for pulling models before the web UI starts:
+
+    ```bash
+    # Linux x64
+    ./bin/ollama-linux-x64/ollama pull llama3.2
+
+    # macOS
+    ./bin/ollama-macos-arm64/ollama pull llama3.2
+
+    # Windows (Command Prompt)
+    bin\ollama\ollama.exe pull llama3.2
+    ```
+
+    The binary must be invoked with `OLLAMA_MODELS` pointing at the project's model directory if the Odysseus server is not already running.
+  </Tab>
+  <Tab title="System Ollama CLI">
+    If you have a system-level `ollama` installation and Odysseus is already running, you can use the system CLI as long as it targets the same port:
+
+    ```bash
+    OLLAMA_HOST=127.0.0.1:11434 ollama pull mistral
+    ```
+  </Tab>
+</Tabs>
+
+## Coexistence with System Ollama
+
+If you have Ollama installed system-wide and it is already running on port 11434 when Odysseus starts, the orchestrator detects the open port and skips spawning a new process:
+
+```text
+[Ollama] Existing Ollama server detected on 127.0.0.1:11434.
+[Ollama] Note: existing servers may use their original OLLAMA_MODELS path, not <projectRoot>/models/ollama/
+```
+
+<Warning>
+  When reusing an existing Ollama instance, the `OLLAMA_MODELS` override does not apply — that server was started with its own model path (typically `~/.ollama/models`). Models pulled through the existing instance will not be stored in the Odysseus project folder, which breaks portability.
+</Warning>
+
+To guarantee portable model storage, stop any system Ollama process before launching Odysseus Portable:
+
+```bash
+# Linux (systemd)
+sudo systemctl stop ollama
+
+# macOS
+osascript -e 'quit app "Ollama"'
+```
+
+## Switching Back to llama.cpp
+
+<Tip>
+  You can switch from Ollama back to the llama.cpp backend at any time — no reinstallation needed. Either edit `data/launcher_config.json` and set `"backend": "llama"`, or pass `--backend=llama` on the next launch. GGUF files already in `models/` will be picked up immediately.
+</Tip>
+
+```json
+{
+  "backend": "llama"
+}
+```

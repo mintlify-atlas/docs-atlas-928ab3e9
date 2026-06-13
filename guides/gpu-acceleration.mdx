@@ -1,0 +1,178 @@
+---
+title: "GPU Acceleration in Odysseus Portable"
+sidebarTitle: "GPU Acceleration"
+description: "Odysseus Portable automatically detects and enables GPU acceleration via CUDA, Vulkan, Metal, or falls back to CPU — no manual configuration needed."
+---
+
+Odysseus Portable performs hardware detection on every launch and selects the best available inference backend automatically. There is nothing to configure: if a supported GPU is present, it will be used. The orchestrator then downloads the matching `llama-server` binary for your GPU backend and calculates an optimal context window size based on your available VRAM or RAM. The only time you need to intervene is when you want to override the automatic context size or force a specific behavior for testing.
+
+## How GPU Detection Works
+
+Hardware detection runs inside `src/system.js` before any binary is downloaded or launched. The detection follows a strict priority order.
+
+<Steps>
+  <Step title="Apple Silicon Metal (macOS ARM64)">
+    If the current platform is `darwin` and the CPU architecture is `arm64`, Metal acceleration is selected immediately without any additional probing. All Apple Silicon Macs (M1, M2, M3, M4 and later) qualify.
+
+    ```
+    gpuBackend = 'metal'
+    gpuName    = 'Apple Silicon Integrated GPU (Metal)'
+    ```
+  </Step>
+
+  <Step title="NVIDIA CUDA (Windows and Linux)">
+    The orchestrator runs `nvidia-smi` with the `--query-gpu` flag to retrieve GPU information:
+
+    ```bash
+    nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits
+    ```
+
+    If the command succeeds, `gpuBackend` is set to `'cuda'`. The GPU name, total VRAM (in MiB), and free VRAM are all captured and used for context window calculations.
+  </Step>
+
+  <Step title="Vulkan (Windows and Linux)">
+    When CUDA is not detected, the orchestrator checks for Vulkan support:
+
+    - **Windows**: Looks for `vulkan-1.dll` in `%windir%\System32`. Present on virtually all modern Windows systems with a discrete or integrated GPU.
+    - **Linux**: Checks for `vulkaninfo` in `PATH`, then falls back to checking these library paths:
+      - `/usr/lib/x86_64-linux-gnu/libvulkan.so.1`
+      - `/usr/lib/libvulkan.so.1`
+      - `/usr/lib64/libvulkan.so.1`
+
+    If found, `gpuBackend` is set to `'vulkan'`.
+  </Step>
+
+  <Step title="CPU fallback">
+    If no GPU backend is detected, `gpuBackend` remains `'cpu'`. Inference still works; it is simply slower. Context window sizing switches to using system RAM instead of VRAM.
+  </Step>
+</Steps>
+
+## GPU Detection Effects on Inference
+
+The detected GPU backend directly controls two things: which `llama-server` binary is downloaded, and how many model layers are offloaded to the GPU.
+
+| GPU Backend | `ngl` (GPU layers) | Effect |
+|---|---|---|
+| `metal`, `cuda`, `vulkan` | `99` (all layers) | Full GPU acceleration — fastest inference |
+| `cpu` | `0` (no offload) | All computation on CPU — slower but functional |
+
+<Note>
+  The `ngl 99` value does not mean exactly 99 layers are loaded — it is a sentinel value that tells `llama-server` to offload as many layers as possible. The actual number is capped by the model's layer count and available VRAM.
+</Note>
+
+## Automatic Context Window Sizing
+
+The llama backend (`src/backends/llama/index.js`) calculates the best context window size from your available memory before starting `llama-server`. This avoids OOM crashes on first load and maximises the context you can actually use.
+
+The core formula:
+
+```
+usable_memory  = free_VRAM (or RAM on CPU) - largest_model_size_GB - overhead_GB
+estimated_ctx  = floor((usable_memory / kv_factor) * 4096 / parallel_slots)
+```
+
+The KV cache factor (`kv_factor`) scales with model size to reflect real-world memory usage:
+
+| Largest model on drive | KV factor (GB per 4096 tokens) |
+|---|---|
+| ≥ 5.5 GB | 1.05 |
+| ≥ 4.0 GB | 0.85 |
+| < 4.0 GB | 0.55 |
+
+The resulting estimated context is then snapped to the nearest step in the context ladder:
+
+```
+32768 → 24576 → 16384 → 12288 → 8192 → 4096 → 2048
+```
+
+The orchestrator picks the largest ladder value that fits within your estimated usable memory.
+
+## Platform-Specific Notes
+
+<Tabs>
+  <Tab title="NVIDIA (CUDA)">
+    **Supported on**: Windows and Linux x64/ARM64
+
+    The orchestrator downloads a CUDA-accelerated `llama-server` binary from the official llama.cpp releases (targeting CUDA 12.4). On Linux, if the CUDA runtime libraries are not already installed, the orchestrator automatically fetches them via `uv pip install`:
+
+    - `nvidia-cuda-runtime-cu12`
+    - `nvidia-cublas-cu12`
+    - `nvidia-nccl-cu12`
+    - `nvidia-cuda-nvrtc-cu12`
+
+    These are extracted to the `bin/llama-linux-x64/` directory so no system-level CUDA installation is required.
+
+    <Note>
+      Your NVIDIA display driver must be installed and up to date on the host machine. The driver is **not** bundled with Odysseus Portable. Download it from [nvidia.com/drivers](https://www.nvidia.com/Download/index.aspx).
+    </Note>
+  </Tab>
+
+  <Tab title="AMD / Intel (Vulkan)">
+    **Supported on**: Windows (all Vulkan-capable GPUs) and Linux
+
+    On Windows, the presence of `vulkan-1.dll` in `System32` is sufficient — no extra drivers are needed since Vulkan support ships with modern GPU drivers from AMD, Intel, and NVIDIA.
+
+    On Linux, install the Vulkan runtime for your GPU vendor:
+
+    ```bash
+    # AMD (Mesa)
+    sudo apt install mesa-vulkan-drivers
+
+    # NVIDIA
+    sudo apt install vulkan-utils
+
+    # Intel
+    sudo apt install intel-media-va-driver
+    ```
+
+    The orchestrator downloads the Vulkan-accelerated `llama-server` binary automatically once Vulkan is detected.
+  </Tab>
+
+  <Tab title="Apple Silicon (Metal)">
+    **Supported on**: macOS ARM64 (M1 and later)
+
+    Metal acceleration is detected purely from the platform and architecture — no additional software or driver installation is required. The orchestrator downloads the `bin-macos-arm64` build of `llama-server` with Metal support compiled in.
+
+    After download, macOS Gatekeeper quarantine attributes are stripped automatically:
+
+    ```bash
+    xattr -r -d com.apple.quarantine "<bin/llama-macos-arm64 directory>"
+    ```
+
+    If you still see a Gatekeeper dialog, see the [Troubleshooting](/guides/troubleshooting) page.
+  </Tab>
+
+  <Tab title="CPU Only">
+    **Supported on**: All platforms
+
+    When no GPU is detected, `llama-server` is launched with `-ngl 0`, meaning all transformer layers run on the CPU. Context window sizing uses system RAM instead of VRAM, with a 2 GB overhead reserved for the OS and other processes.
+
+    By default, `llama-server` is started with `--threads 4`. This value is fixed in the current release regardless of your CPU's core count.
+
+    <Tip>
+      On a CPU-only machine, stick to smaller quantizations (Q4_K_M or Q2_K) of models with fewer parameters (1.5B–3B) for interactive speeds. A 7B Q4_K_M model on CPU will generate roughly 2–6 tokens/second depending on your hardware.
+    </Tip>
+  </Tab>
+</Tabs>
+
+## Overriding the Context Window
+
+If the automatic context calculation gives a suboptimal result — for example, if you have recently freed VRAM by closing other applications, or if you simply want a specific context size — you can override it with the `ODYSSEUS_LLAMA_CTX` environment variable.
+
+```bash
+# macOS / Linux
+ODYSSEUS_LLAMA_CTX=8192 ./start.sh
+
+# Windows (Command Prompt)
+set ODYSSEUS_LLAMA_CTX=8192 && start.bat
+```
+
+You can also set `ODYSSEUS_LLAMA_PARALLEL` to change the number of parallel inference slots. Each additional slot multiplies the KV cache memory requirement, so lower the context if you increase parallelism.
+
+```bash
+ODYSSEUS_LLAMA_CTX=8192 ODYSSEUS_LLAMA_PARALLEL=2 ./start.sh
+```
+
+<Tip>
+  If you have a GPU that is being detected correctly but you want to test CPU-only inference, you cannot disable GPU detection through an environment variable — the binary selection is hardware-driven at startup. If you need to force CPU mode, manually place a CPU-targeted build of `llama-server` in the appropriate `bin/llama-*/` directory before launching.
+</Tip>

@@ -1,0 +1,260 @@
+---
+title: "Troubleshooting Odysseus Portable Issues"
+sidebarTitle: "Troubleshooting"
+description: "Solutions for common Odysseus Portable problems — port conflicts, model OOM errors, USB symlink failures, macOS Gatekeeper, and startup crashes."
+---
+
+Most Odysseus Portable issues fall into a small set of categories: port conflicts, model memory pressure, filesystem limitations on USB drives, or platform security restrictions on downloaded binaries. The sections below cover each scenario with specific diagnostic steps and fixes. If none of these solve your problem, the combined log file is always the best starting point — see [Reading Logs](#reading-logs) at the end of this page.
+
+<AccordionGroup>
+  <Accordion title="Port is already in use">
+    **Symptoms**: The orchestrator prints an error like `EADDRINUSE: address already in use` or a service fails to start.
+
+    Odysseus Portable uses three ports by default:
+
+    | Service | Default Port | Environment Variable |
+    |---|---|---|
+    | Odysseus web UI | `7070` | `ODYSSEUS_PORT` |
+    | API proxy | `8080` | `ODYSSEUS_PROXY_PORT` |
+    | llama-server | `10086` | `ODYSSEUS_LLAMA_PORT` |
+
+    The orchestrator automatically detects occupied ports and increments to the next available one. For example, if port `7070` is taken it will try `7071`, `7072`, and so on. Check the console output for a line like:
+
+    ```
+    [Orchestrator] Port 7070 is in use. Selected next free port: 7071
+    ```
+
+    If the auto-selection still fails, find and stop whatever process is holding the port:
+
+    ```bash
+    # macOS / Linux
+    lsof -i :7070
+    kill -9 <PID>
+
+    # Windows (Command Prompt)
+    netstat -ano | findstr :7070
+    taskkill /PID <PID> /F
+    ```
+
+    To permanently use different ports, set environment variables before launching:
+
+    ```bash
+    # macOS / Linux
+    ODYSSEUS_PORT=7171 ODYSSEUS_PROXY_PORT=8181 ./start.sh
+
+    # Windows
+    set ODYSSEUS_PORT=7171 && set ODYSSEUS_PROXY_PORT=8181 && start.bat
+    ```
+  </Accordion>
+
+  <Accordion title="GGUF model fails to load or Out of Memory (OOM)">
+    **Symptoms**: `llama-server` crashes shortly after a model is selected, the proxy returns a 5xx error, or you see `out of memory` / `failed to allocate` in the logs.
+
+    The proxy server catches memory errors from `llama-server` and automatically retries with a smaller context window, stepping down through this ladder:
+
+    ```
+    32768 → 24576 → 16384 → 12288 → 8192 → 4096 → 2048
+    ```
+
+    Each step restarts `llama-server` with a lower `--ctx-size` value. The console will print:
+
+    ```
+    [Inference] llama.cpp model load hit memory pressure.
+    Restarting router with lower context: 16384 tokens...
+    ```
+
+    If `llama-server` still fails after stepping down to 2048 tokens, the model is too large for your current hardware. Options:
+
+    - Download a smaller quantization of the same model (e.g. Q2\_K instead of Q8\_0)
+    - Download a smaller parameter model (1.5B or 3B instead of 7B/8B)
+    - Force a lower starting context to avoid repeated restarts:
+
+    ```bash
+    ODYSSEUS_LLAMA_CTX=4096 ./start.sh
+    ```
+
+    To check current VRAM usage:
+
+    ```bash
+    # NVIDIA
+    nvidia-smi
+
+    # macOS — open Activity Monitor → Window → GPU History
+    ```
+  </Accordion>
+
+  <Accordion title="exFAT or FAT32 USB drive symbolic link errors">
+    **Symptoms**: Warnings in the console about symlink creation failures, or models not appearing in the server's model list despite being present in the `models/` folder.
+
+    exFAT and FAT32 filesystems do not support symbolic links. When `llama-server` scans nested model folders (e.g. HuggingFace hub cache structure), the orchestrator tries to create a flat symlink in the `models/` root for each nested GGUF file. On FAT-based drives this fails.
+
+    The orchestrator handles this automatically in two ways:
+
+    1. **Archive extraction**: Archives are extracted to a temporary directory on the host's local filesystem (`~/.cache/odysseus-portable/temp-extract/`), symlinks inside the archive are resolved to real file copies, and the result is copied back to the drive.
+    2. **Model linking**: If `fs.symlinkSync` fails, the code falls back to `fs.linkSync` (a hardlink). If hardlinks also fail, a warning is logged but the model path is still registered.
+
+    If you still see symlink errors after the above fallbacks:
+
+    - Ensure the drive is mounted with **write permissions** (not read-only mode)
+    - On macOS, check System Settings → Privacy & Security → Files and Folders
+    - On Linux, verify the mount options with `mount | grep <drive-label>` and remount without `ro` if needed
+  </Accordion>
+
+  <Accordion title='macOS Gatekeeper "cannot be opened" error'>
+    **Symptoms**: macOS shows a dialog like *"llama-server cannot be opened because it is from an unidentified developer"* or *"cannot be opened because Apple cannot check it for malicious software"*.
+
+    The orchestrator automatically strips Gatekeeper quarantine attributes from downloaded binaries after extraction:
+
+    ```bash
+    xattr -r -d com.apple.quarantine "<llamaDir>"
+    ```
+
+    If you still see the dialog, it may be on the `start.sh` script itself or on the Node.js binary. Fix it manually:
+
+    ```bash
+    # Allow start.sh to run
+    chmod +x start.sh
+    xattr -d com.apple.quarantine start.sh
+
+    # Strip quarantine from the entire project folder
+    xattr -r -d com.apple.quarantine /Volumes/MyDrive/Odysseus-Portable
+
+    # Or target the llama binary directory specifically
+    xattr -r -d com.apple.quarantine bin/llama-macos-arm64/
+    ```
+
+    <Note>
+      You may need to approve the binary once in **System Settings → Privacy & Security → Allow anyway** on macOS Sequoia and later, even after removing the quarantine attribute.
+    </Note>
+  </Accordion>
+
+  <Accordion title="Python dependencies fail to install">
+    **Symptoms**: The orchestrator stops during the "Installing dependencies" step, prints a pip or uv error, and exits with a non-zero code.
+
+    The dependency installation method differs by platform:
+
+    <Tabs>
+      <Tab title="Windows">
+        Windows uses an embedded Python 3.12 extracted to `odysseus/bin/python/`.
+
+        1. Verify the Python executable exists:
+           ```cmd
+           dir odysseus\bin\python\python.exe
+           ```
+        2. If it is missing, delete `odysseus\bin\python\` and relaunch — the orchestrator will re-download and re-extract the embedded Python.
+        3. If Python exists but pip is missing, the orchestrator re-bootstraps pip automatically. If that also fails, delete `odysseus\bin\python\` entirely and relaunch.
+      </Tab>
+      <Tab title="macOS / Linux">
+        macOS and Linux use `uv` (stored at `odysseus/bin/uv`) to manage dependencies into a virtual environment at `~/.cache/odysseus-portable/envs/`.
+
+        1. Verify the `uv` binary exists and is executable:
+           ```bash
+           ls -la odysseus/bin/uv
+           ```
+        2. If it is missing, delete `odysseus/bin/uv-macos-*` or `odysseus/bin/uv-linux-*` and relaunch.
+        3. If the virtual environment is corrupted, delete it and let the orchestrator recreate it:
+           ```bash
+           rm -rf ~/.cache/odysseus-portable/envs/
+           ```
+      </Tab>
+    </Tabs>
+
+    For any dependency failure, check the full error output in `logs/combined_<timestamp>.log` — the specific package name and error message will be there.
+  </Accordion>
+
+  <Accordion title="Odysseus web app does not open in browser">
+    **Symptoms**: The orchestrator completes startup but no browser window appears, or the browser opens to a blank page or connection error.
+
+    The orchestrator opens the browser using the OS's default handler (`start` on Windows, `open` on macOS, `xdg-open` on Linux) after confirming the web server is listening. If the browser does not open automatically:
+
+    1. Wait for the console to print:
+       ```
+       [Odysseus] Odysseus is ready and active.
+       ```
+    2. Navigate manually to `http://127.0.0.1:7070` (or whichever port is shown in the console output).
+    3. If the connection is refused, check the console for a "Selected next free port" message — the actual port may differ from 7070.
+    4. If the Odysseus Python process failed to start, the console will print an exit code error. Check `logs/combined_<timestamp>.log` for the Python traceback.
+  </Accordion>
+
+  <Accordion title="Login credentials not working">
+    **Symptoms**: The Odysseus login page rejects username/password combinations.
+
+    The default credentials seeded at first run are:
+
+    | Field | Default Value |
+    |---|---|
+    | Username | `admin` |
+    | Password | `techjarves` |
+
+    If you have overridden these with environment variables, use those values instead:
+
+    ```bash
+    ODYSSEUS_ADMIN_USER=myuser ODYSSEUS_ADMIN_PASSWORD=mypassword ./start.sh
+    ```
+
+    <Warning>
+      To reset credentials to the defaults, delete the `odysseus/data/` directory and relaunch. This also deletes all chat history, calendar entries, and agent definitions. Make a backup first if you want to preserve that data.
+    </Warning>
+
+    After signing in for the first time, change the default password in the Odysseus user profile settings.
+  </Accordion>
+
+  <Accordion title="llama-server crashes immediately on startup">
+    **Symptoms**: The orchestrator prints `[Error] llama-server terminated unexpectedly with code <N>` within seconds of starting, or the inference backend never becomes ready.
+
+    Diagnostic steps:
+
+    1. **Check the log** — the last 40 lines of `logs/combined_<timestamp>.log` are printed to the console on crash. Look for a specific error from `llama-server`.
+
+    2. **Linux CUDA**: Ensure your NVIDIA driver is current. The CUDA runtime bundled by the orchestrator requires a minimum driver version:
+       ```bash
+       nvidia-smi
+       # Check the "Driver Version" field
+       ```
+
+    3. **macOS quarantine**: Even if the app launched once, a macOS update can re-quarantine binaries. Strip the attribute again:
+       ```bash
+       xattr -r -d com.apple.quarantine bin/llama-macos-arm64/
+       ```
+
+    4. **Force binary re-download**: If the binary is corrupted or mismatched for your system, delete it and let the orchestrator fetch a fresh copy:
+       ```bash
+       # macOS ARM64 example
+       rm -rf bin/llama-macos-arm64/
+
+       # Linux x64 example
+       rm -rf bin/llama-linux-x64/
+
+       # Windows
+       rmdir /s /q bin\llama
+       ```
+
+    5. **Missing GGUF models**: `llama-server` in router mode starts without a model loaded. If it still crashes before any model is requested, the binary itself may be incompatible with your OS version.
+  </Accordion>
+</AccordionGroup>
+
+## Reading Logs
+
+All output from the orchestrator, the Odysseus web server, and `llama-server` is captured in a single combined log file created at startup:
+
+```
+logs/combined_<YYYY-MM-DD_HH-MM-SS>.log
+```
+
+The `logs/` directory is cleared at the beginning of each launch, so there is always exactly one log file corresponding to the current or most recent session.
+
+<Tip>
+  When reporting a bug or seeking help, attach your `logs/combined_*.log` file. It contains the full startup sequence, hardware detection output, dependency installation results, and any Python or llama-server errors — everything needed to diagnose the problem.
+</Tip>
+
+To read the log in real time while Odysseus is running:
+
+```bash
+# macOS / Linux
+tail -f logs/combined_*.log
+
+# Windows (PowerShell)
+Get-Content logs\combined_*.log -Wait
+```
+
+If the orchestrator crashes before writing anything to the log, check the terminal window where you ran `start.sh` or `start.bat` — the fatal error message will be printed there before the process exits.

@@ -1,0 +1,196 @@
+---
+title: "Hardware Detection in Odysseus Portable"
+sidebarTitle: "Hardware Detection"
+description: "How detectHardware() probes OS, arch, RAM, and GPU type — CUDA, Vulkan, Metal, or CPU — to pick the right llama.cpp binary and tune inference settings."
+---
+
+Before downloading a single binary, Odysseus Portable needs to know exactly what hardware it is running on. The `detectHardware()` function in `src/system.js` answers that question in a single synchronous sweep: it probes `process.platform`, `process.arch`, native OS commands for RAM capacity, and a cascade of GPU detection methods to determine whether the host machine can accelerate inference with CUDA, Vulkan, or Metal — or must fall back to CPU. The result is a plain object that flows through every binary selection and inference configuration decision made during startup.
+
+## Return Value Structure
+
+```typescript
+{
+  os: 'win' | 'macos' | 'linux',
+  arch: 'x64' | 'arm64',
+  ramGB: number,
+  cpuCores: number,
+  cpuModel: string,
+  gpuBackend: 'cuda' | 'vulkan' | 'metal' | 'cpu',
+  gpuName: string,
+  gpuMemoryGB: number,      // total VRAM in GB (CUDA only; 0 otherwise)
+  gpuFreeMemoryGB: number   // free VRAM in GB  (CUDA only; 0 otherwise)
+}
+```
+
+<Note>
+  `gpuMemoryGB` and `gpuFreeMemoryGB` are only populated for CUDA GPUs via `nvidia-smi`. Metal and Vulkan detection does not query VRAM, so those fields remain `0` for Apple Silicon and Vulkan devices. Context window sizing for those backends falls back to system RAM instead.
+</Note>
+
+## OS and Architecture Detection
+
+OS is mapped from Node.js's `process.platform` string to a shorter internal identifier:
+
+```javascript
+let detectedOS = 'linux';
+if (platform === 'win32') detectedOS = 'win';
+else if (platform === 'darwin') detectedOS = 'macos';
+```
+
+Architecture is read directly from `process.arch`. Any value other than `'x64'` or `'arm64'` is normalised to `'x64'` in the return value to keep downstream logic simple:
+
+```javascript
+arch: arch === 'x64' || arch === 'arm64' ? arch : 'x64'
+```
+
+CPU core count and model name come from Node.js's `os.cpus()` array, which is available on all platforms without shelling out.
+
+## RAM Detection
+
+RAM detection uses a different native command on each platform to get the most accurate physical memory figure:
+
+<Tabs>
+  <Tab title="Windows">
+    Queries WMI through PowerShell and converts bytes to GB:
+
+    ```javascript
+    const memStr = runCmd(
+      'powershell -Command "(Get-CimInstance Win32_ComputerSystem).TotalPhysicalMemory"'
+    );
+    if (memStr) {
+      const bytes = parseInt(memStr.trim(), 10);
+      if (!isNaN(bytes)) ramGB = Math.round(bytes / (1024 * 1024 * 1024));
+    }
+    ```
+  </Tab>
+  <Tab title="macOS">
+    Reads the hardware memory size from the sysctl interface:
+
+    ```javascript
+    const memStr = runCmd('sysctl -n hw.memsize');
+    if (memStr) {
+      const bytes = parseInt(memStr.trim(), 10);
+      if (!isNaN(bytes)) ramGB = Math.round(bytes / (1024 * 1024 * 1024));
+    }
+    ```
+  </Tab>
+  <Tab title="Linux">
+    Parses `/proc/meminfo` directly, avoiding any external command dependency:
+
+    ```javascript
+    const meminfo = fs.readFileSync('/proc/meminfo', 'utf8');
+    const match = meminfo.match(/MemTotal:\s+(\d+)\s+kB/);
+    if (match) {
+      ramGB = Math.round(parseInt(match[1], 10) / (1024 * 1024));
+    }
+    ```
+  </Tab>
+</Tabs>
+
+If all three methods fail (e.g., restricted environment, missing commands), `ramGB` defaults to `8`.
+
+## GPU Detection Flow
+
+GPU detection follows a strict priority cascade. Each step is only attempted if all previous steps have not produced a result:
+
+<Steps>
+  <Step title="Apple Silicon Metal (macOS ARM64)">
+    Checked first, before any external commands are run. Any macOS machine with `arch === 'arm64'` is an Apple Silicon Mac with a unified memory GPU that supports Metal:
+
+    ```javascript
+    if (detectedOS === 'macos' && arch === 'arm64') {
+      gpuBackend = 'metal';
+      gpuName = 'Apple Silicon Integrated GPU (Metal)';
+    }
+    ```
+
+    This check is unconditional — there is no way to have an `arm64` macOS system without Metal support.
+  </Step>
+  <Step title="NVIDIA CUDA (nvidia-smi)">
+    Runs `nvidia-smi` with structured output to get the GPU name, total VRAM, and free VRAM in a single call:
+
+    ```javascript
+    const nvidiaSmi = runCmd(
+      'nvidia-smi --query-gpu=name,memory.total,memory.free --format=csv,noheader,nounits'
+    );
+    if (nvidiaSmi) {
+      gpuBackend = 'cuda';
+      const firstGpu = nvidiaSmi.split('\n')[0].trim();
+      const parts = firstGpu.split(',').map(p => p.trim());
+      gpuName = parts[0] || 'NVIDIA GPU';
+      const totalMiB = parseInt(parts[1] || '0', 10);
+      const freeMiB  = parseInt(parts[2] || '0', 10);
+      if (!isNaN(totalMiB) && totalMiB > 0) gpuMemoryGB     = +(totalMiB / 1024).toFixed(1);
+      if (!isNaN(freeMiB)  && freeMiB  > 0) gpuFreeMemoryGB = +(freeMiB  / 1024).toFixed(1);
+    }
+    ```
+
+    VRAM is reported in MiB by `nvidia-smi` and divided by 1024 to produce GB rounded to one decimal place. Only the first GPU in a multi-GPU system is used.
+  </Step>
+  <Step title="Vulkan">
+    Attempted when neither Metal nor CUDA is detected. The check is filesystem-based on Windows and command-based on Linux:
+
+    **Windows** — checks for the Vulkan runtime DLL in the system directory:
+    ```javascript
+    const winDir = process.env.windir || 'C:\\Windows';
+    const vulkanDll = path.join(winDir, 'System32', 'vulkan-1.dll');
+    if (fs.existsSync(vulkanDll)) hasVulkan = true;
+    ```
+
+    **Linux** — first tries `which vulkaninfo`, then falls back to checking common library paths:
+    ```javascript
+    const vulkanInfo = runCmd('which vulkaninfo');
+    if (vulkanInfo) {
+      hasVulkan = true;
+    } else {
+      const commonVulkanPaths = [
+        '/usr/lib/x86_64-linux-gnu/libvulkan.so.1',
+        '/usr/lib/libvulkan.so.1',
+        '/usr/lib64/libvulkan.so.1'
+      ];
+      hasVulkan = commonVulkanPaths.some(p => fs.existsSync(p));
+    }
+    ```
+
+    On Windows, if Vulkan is confirmed, the GPU device name is resolved with `vulkaninfo --summary` via PowerShell and parsed from the `deviceName =` field.
+  </Step>
+  <Step title="CPU fallback">
+    If none of the above steps sets a GPU backend, `gpuBackend` remains at its initial value of `'cpu'` and `gpuName` remains `'None'`.
+  </Step>
+</Steps>
+
+## How Detection Drives Binary Selection
+
+The `hw` object returned by `detectHardware()` is passed directly to `getLlamaCppAssets(hw)` in `src/downloader.js`, which uses it to select the correct asset from the llama.cpp GitHub release:
+
+| `hw.os` | `hw.gpuBackend` | `hw.arch` | Asset pattern matched |
+|---------|----------------|-----------|-----------------------|
+| `win` | `cuda` | `x64` | `llama-*-bin-win-cuda*12.4*.zip` |
+| `win` | `vulkan` | `x64` | `llama-*-bin-win-vulkan*.zip` |
+| `win` | `cpu` | `x64` | `llama-*-bin-win-cpu*x64*.zip` |
+| `macos` | `metal` | `arm64` | `llama-*-bin-macos-arm64*.tar.gz` |
+| `macos` | `metal` | `x64` | `llama-*-bin-macos-x64*.tar.gz` |
+| `linux` | `cuda` | `x64` | `*-cuda-*amd64.tar.gz` (ai-dock fork) |
+| `linux` | `vulkan` | `x64` | `llama-*-bin-ubuntu-vulkan*x64*.tar.gz` |
+| `linux` | `cpu` | `x64` | `llama-*-bin-ubuntu-x64*.tar.gz` |
+
+For CUDA on Linux, `getLlamaCppAssets` targets the `ai-dock/llama.cpp-cuda` repository instead of the main `ggml-org/llama.cpp` repository, which ships pre-linked CUDA binaries.
+
+## How Detection Drives Inference Settings
+
+Two inference parameters are derived directly from the hardware profile:
+
+**GPU layer offload (`ngl`)** — controls how many model layers are offloaded to the GPU. A CPU-only machine gets `ngl = 0`; any GPU backend gets `ngl = 99` (all layers):
+
+```javascript
+const ngl = hw.gpuBackend === 'cpu' ? 0 : 99;
+```
+
+**Context window size** — the llama.cpp backend auto-calculates a safe context size based on available memory. The priority for the memory figure used in this calculation is:
+
+1. `hw.gpuFreeMemoryGB` — free VRAM (CUDA only)
+2. `hw.gpuMemoryGB` — total VRAM if free VRAM is unavailable
+3. `hw.ramGB` — system RAM for CPU inference
+
+<Tip>
+  On machines with multiple CUDA GPUs, only the first GPU reported by `nvidia-smi` is used for VRAM calculations. If the other GPUs have significantly more free memory, consider setting `CUDA_VISIBLE_DEVICES` before launch to expose only the most capable GPU.
+</Tip>

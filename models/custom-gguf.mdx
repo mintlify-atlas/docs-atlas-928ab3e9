@@ -1,0 +1,129 @@
+---
+title: "Using Custom GGUF Models in Odysseus Portable"
+sidebarTitle: "Custom GGUF"
+description: "Add any GGUF model to Odysseus Portable by placing the file in the models folder — supports flat files, nested Hugging Face hub caches, and subfolder organization."
+---
+
+Odysseus Portable is not limited to its predefined model list. Because `llama-server` is configured to scan the entire `models/` folder recursively at startup, any valid GGUF file you place there — regardless of where it came from — is automatically registered and available for inference. This makes it straightforward to experiment with the latest community releases, fine-tuned variants, or private models you have converted yourself, without touching any configuration files.
+
+## What Is a GGUF File?
+
+GGUF (GPT-Generated Unified Format) is the standard model serialization format used by [llama.cpp](https://github.com/ggml-org/llama.cpp). It packages model weights, tokenizer data, and architecture metadata into a single portable file. Virtually every open-weight model released on Hugging Face today has a GGUF variant available, usually at multiple quantization levels. If a model page lists files ending in `.gguf`, it will work with Odysseus Portable.
+
+## Adding a Custom Model
+
+<Steps>
+  <Step title="Simple drag-and-drop">
+    The fastest method. Copy or move your `.gguf` file into the `models/` folder at the Odysseus Portable project root. Flat top-level files are picked up immediately on the next launch or model reload — no additional steps required.
+
+    ```text
+    models/
+      my-fine-tuned-model-q4_k_m.gguf
+    ```
+
+    You can also organise models into subfolders if you prefer. The recursive scanner will find them regardless of nesting depth.
+  </Step>
+  <Step title="Download from Hugging Face via curl">
+    Navigate to the model's page on [huggingface.co](https://huggingface.co), locate the GGUF file you want under the **Files and versions** tab, and copy its direct URL. Then download it straight into `models/`:
+
+    ```bash
+    curl -L -o models/my-model-q4_k_m.gguf \
+      https://huggingface.co/org/repo/resolve/main/model-q4_k_m.gguf
+    ```
+
+    For gated or private models, add your Hugging Face read token to the request:
+
+    ```bash
+    curl -L \
+      -H "Authorization: Bearer hf_yourTokenHere" \
+      -o models/my-model-q4_k_m.gguf \
+      https://huggingface.co/org/private-repo/resolve/main/model-q4_k_m.gguf
+    ```
+
+    <Note>
+      You can persist your Hugging Face token so the Odysseus Cookbook and downloader can access gated models automatically. Create a `.env` file inside the `odysseus/` directory with the line `HUGGING_FACE_HUB_TOKEN=hf_yourTokenHere`.
+    </Note>
+  </Step>
+  <Step title="Via the Odysseus Cookbook UI">
+    Open the Odysseus web interface at `http://127.0.0.1:7070` and navigate to the **Cookbook** tab. Use the built-in model download panel to search for and pull any Hugging Face GGUF model directly into the `models/` folder without leaving your browser. The Cookbook shows download progress and organises files into the standard `hub/` cache layout automatically.
+  </Step>
+</Steps>
+
+## How Nested Models Are Resolved
+
+When `llama-server` starts, Odysseus Portable scans `models/` recursively and creates a **flat symlink** (or a **hardlink** on FAT32/exFAT drives) at the top level for every GGUF file discovered in a subdirectory. This lets llama-server address all models through a single flat namespace.
+
+For example, a Hugging Face hub cache entry like:
+
+```text
+models/hub/models--myorg--mymodel/snapshots/abc123/mymodel-q4_k_m.gguf
+```
+
+Results in a flat link created automatically:
+
+```text
+models/myorg--mymodel.gguf   ← symlink pointing to hub/models--myorg--mymodel/...
+```
+
+The proxy layer then maps the Hugging Face-style repo ID (`myorg/mymodel`) to that flat filename, so API clients can reference the model by its canonical name:
+
+```json
+{
+  "model": "myorg/mymodel",
+  "messages": [{ "role": "user", "content": "Hello!" }]
+}
+```
+
+Flat links are **regenerated on every launch** — stale links from deleted models are cleaned up automatically, so you never need to manage them manually.
+
+## Quantization Guide
+
+GGUF files for the same base model are distributed at multiple quantization levels. Choosing the right level means balancing file size, RAM/VRAM usage, and output quality.
+
+<AccordionGroup>
+  <Accordion title="Q2_K — Smallest size, lowest quality">
+    Aggressively compressed. Use this only when storage or RAM is the hard constraint (e.g. 4 GB RAM machines). Output quality degrades noticeably compared to higher quantizations, but the model remains usable for simple tasks.
+
+    **Typical size vs Q4\_K\_M:** ~55–60%
+  </Accordion>
+  <Accordion title="Q4_K_M — Best balance (recommended)">
+    The default choice for most users. Provides strong output quality very close to the full-precision model at roughly half the file size. All of the predefined models in Odysseus Portable use Q4\_K\_M.
+
+    **Typical size vs F16:** ~30–35%
+  </Accordion>
+  <Accordion title="Q5_K_M — Better quality, ~25% larger than Q4_K_M">
+    A step up from Q4\_K\_M with a modest size increase. A good option if you have a few GB to spare and want tighter fidelity to the original model weights, particularly for structured output or code generation tasks.
+  </Accordion>
+  <Accordion title="Q6_K — Near-lossless quality">
+    Very close to the original floating-point weights. Recommended when output accuracy is critical and storage is not a concern. Noticeably larger than Q4\_K\_M but still significantly smaller than F16.
+
+    **Typical size vs Q4\_K\_M:** ~140–150%
+  </Accordion>
+  <Accordion title="Q8_0 — Highest quality GGUF">
+    The highest-fidelity quantized format. Output is nearly indistinguishable from F16 at about half the size. Requires significant RAM/VRAM — typically only practical for 3B models and smaller on mid-range hardware.
+
+    **Typical size vs Q4\_K\_M:** ~190–210%
+  </Accordion>
+  <Accordion title="F16 / F32 — Full precision">
+    Full 16-bit or 32-bit floating-point weights. These are almost always too large for local inference on consumer hardware. A 7B model in F16 is roughly 14 GB; Q4\_K\_M is under 5 GB. Use quantized formats instead.
+  </Accordion>
+</AccordionGroup>
+
+<Warning>
+  If a model is too large for your available VRAM or RAM, the proxy will automatically retry the request with a progressively smaller context window (stepping down through 32768 → 24576 → 16384 → 12288 → 8192 → 4096 → 2048 tokens). This often resolves memory pressure without any action on your part. However, if the model itself does not fit in memory at any context size, the request will still fail — in that case, switch to a smaller quantization (e.g. Q2\_K or Q4\_K\_M) or a model with fewer parameters (e.g. 1.5B or 3B instead of 7B).
+</Warning>
+
+## Finding GGUF Models
+
+<CardGroup cols={2}>
+  <Card title="TheBloke on Hugging Face" icon="box-archive" href="https://huggingface.co/TheBloke">
+    One of the most prolific GGUF quantizers in the community. TheBloke publishes Q2\_K through Q8\_0 versions of hundreds of popular open-weight models with consistent naming conventions.
+  </Card>
+  <Card title="unsloth on Hugging Face" icon="bolt" href="https://huggingface.co/unsloth">
+    Maintains optimized GGUF quantizations of DeepSeek, Llama, Mistral, and other frontier models — including the models bundled in Odysseus Portable's predefined list.
+  </Card>
+</CardGroup>
+
+<Tip>
+  When browsing Hugging Face for GGUF files, filter by the `gguf` tag on the model page or look for repos with names ending in `-GGUF`. The **Files and versions** tab shows all available quantization variants with their exact file sizes so you can choose before downloading.
+</Tip>

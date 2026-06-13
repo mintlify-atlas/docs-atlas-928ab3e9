@@ -1,0 +1,227 @@
+---
+title: "Orchestrator Internals: src/start.js Deep Dive"
+sidebarTitle: "Orchestrator"
+description: "How the Odysseus Portable orchestrator manages runtimes, ports, subprocesses, logging, and graceful shutdown across Windows, macOS, and Linux."
+---
+
+`src/start.js` is the single entry point for the entire Odysseus Portable runtime. It is a 700-line async Node.js module that sequences every phase of startup — from reading configuration and detecting free ports, through bootstrapping Python and Git, to spawning the inference backend and Odysseus web server — and then remains alive as a supervisor that shuts everything down cleanly when the user presses Ctrl+C. Understanding this file is the fastest path to understanding how the whole system behaves.
+
+## Entry Points
+
+The shell wrappers `start.bat` (Windows) and `start.sh` (macOS/Linux) are thin bootstraps. They detect the current OS and architecture, download the correct Node.js 22 tarball to `bin/node-<os>-<arch>/` if not already present, and then invoke `node src/start.js` from the project root. From that point on, everything is JavaScript.
+
+<Tabs>
+  <Tab title="Windows (start.bat)">
+    Downloads a Node.js 22 `.zip` for `win-x64` to `bin/node-win-x64/`, extracts it with `tar.exe`, and runs `node.exe src/start.js`.
+  </Tab>
+  <Tab title="macOS / Linux (start.sh)">
+    Downloads a Node.js 22 `.tar.gz` for the detected platform and architecture to `bin/node-<os>-<arch>/`, extracts it, marks the binary executable, and runs `node src/start.js`.
+  </Tab>
+</Tabs>
+
+## Port Management
+
+Three ports are used: the Odysseus web application port, an HTTP proxy port for the inference backend, and the llama.cpp server port. Each has a configurable base value drawn from environment variables, then from the launcher config, and finally from the built-in default:
+
+```javascript
+const baseWebPort   = Number(process.env.ODYSSEUS_PORT       || launcherConfig.webPort   || 7070);
+const baseProxyPort = Number(process.env.ODYSSEUS_PROXY_PORT || launcherConfig.proxyPort || 8080);
+const baseLlamaPort = Number(process.env.ODYSSEUS_LLAMA_PORT || launcherConfig.llamaPort || 10086);
+```
+
+`findFreePort(startPort)` increments from the base port until a TCP connect attempt to `127.0.0.1:<port>` fails (meaning nothing is listening), at which point that port is considered free:
+
+```javascript
+async function findFreePort(startPort) {
+  let port = startPort;
+  while (await isPortOpen(port)) {
+    port++;
+  }
+  return port;
+}
+```
+
+Before `findFreePort` runs, `cleanupOwnedPortProcesses()` kills any processes from a previous session that are still holding the preferred ports, using `lsof` (macOS/Linux) or `Get-NetTCPConnection` (Windows) to look up the owning PID, and then verifying that the process command line contains the project root before killing it.
+
+## Launcher Config Loading
+
+`data/launcher_config.json` is a simple JSON file that persists user preferences between launches. It is loaded on startup and re-saved whenever a new preference is recorded (e.g., the backend selection):
+
+```javascript
+function loadLauncherConfig() {
+  if (fs.existsSync(launcherConfigPath)) {
+    try {
+      return JSON.parse(fs.readFileSync(launcherConfigPath, 'utf8')) || {};
+    } catch (e) {
+      console.warn('[Orchestrator Warning] Failed to parse launcher_config.json:', e.message);
+    }
+  }
+  return {};
+}
+```
+
+`saveLauncherConfig(config)` merges the supplied object into the existing file contents, so callers only need to pass the keys they want to update.
+
+## Backend Selection Logic
+
+The backend is resolved from four sources in priority order:
+
+```javascript
+function getBackendChoice(config) {
+  const arg = process.argv.find(a => a.startsWith('--backend='));
+  // 1. CLI flag
+  if (arg) {
+    const val = arg.split('=')[1].toLowerCase();
+    if (val === 'llama' || val === 'llamacpp' || val === 'llama.cpp') return 'llama';
+    return 'ollama';
+  }
+  // 2. Environment variable
+  if (process.env.ODYSSEUS_BACKEND) {
+    const raw = process.env.ODYSSEUS_BACKEND.toLowerCase();
+    if (raw === 'llama' || raw === 'llamacpp' || raw === 'llama.cpp') return 'llama';
+    return 'ollama';
+  }
+  // 3. Saved launcher config
+  const saved = config?.backend;
+  if (saved === 'llama' || saved === 'ollama') return saved;
+  // 4. Default
+  return 'llama';
+}
+```
+
+If none of the first three sources produces a value (which only happens when `config.backend` is unset and no env var or flag is present), the orchestrator falls through to an interactive prompt that asks the user to choose `[1] Ollama` or `[2] llama.cpp` and saves the answer to `launcher_config.json` for future launches.
+
+## Combined Logging
+
+Every byte written to `process.stdout` or `process.stderr` — from the orchestrator itself, from subprocess output piped into the main process, and from the Node.js backend modules — is duplicated to a single log file at `logs/combined_<timestamp>.log`. This is implemented by replacing the built-in write methods:
+
+```javascript
+const combinedLogStream = fs.createWriteStream(combinedLogPath, { flags: 'w' });
+
+process.stdout.write = (chunk, encoding, callback) => {
+  try { combinedLogStream.write(chunk, encoding); } catch (e) {}
+  return originalStdoutWrite(chunk, encoding, callback);
+};
+
+process.stderr.write = (chunk, encoding, callback) => {
+  try { combinedLogStream.write(chunk, encoding); } catch (e) {}
+  return originalStderrWrite(chunk, encoding, callback);
+};
+```
+
+The original write functions are saved and restored in `restoreStdoutStderr()`, which is called during shutdown so that the final "Shutdown complete" messages reach the terminal even after the log stream has been closed.
+
+## Runtime Tracker Integration
+
+`createRuntimeTracker(projectRoot)` (from `src/runtime.js`) returns an object that reads and writes `data/runtime.json`. Every spawned subprocess is registered immediately after it is created:
+
+```javascript
+runtimeTracker.register('odysseus-web', odysseusProcess, [webPort]);
+```
+
+The JSON entry records the process name, PID, ports it owns, the project root path, and a start timestamp. On the next launch, `cleanupPrevious()` reads this file, checks whether each PID is still alive (`process.kill(pid, 0)`), verifies the command line contains the project root (safety guard against killing unrelated processes with a coincidentally matching PID), and then kills survivors before clearing the file.
+
+## Git Bootstrap
+
+The `ensureOdysseusSource()` function in `src/bootstrap/git.js` handles the first-run clone and all subsequent updates. On Windows, it downloads MinGit from the Git for Windows GitHub release API if no portable Git binary is found in `bin/git/`. On macOS and Linux it falls back to the system `git` if available, since no official portable binary exists for those platforms.
+
+Before running `git pull --ff-only`, it calls `git restore -- <patchFiles>` to discard any modifications made by the previous session's patch functions, ensuring the pull applies cleanly against the upstream state:
+
+```javascript
+if (patchFiles.length) {
+  runGit(git, ['restore', '--', ...patchFiles], odysseusDir);
+}
+runGit(git, ['pull', '--ff-only'], odysseusDir);
+```
+
+If Git is completely unavailable, `downloadOdysseusArchive()` fetches the repository as a `.zip` (Windows) or `.tar.gz` (Unix) from the GitHub archive endpoint and extracts it directly.
+
+## Python Environments
+
+<Tabs>
+  <Tab title="Windows (Embedded Python)">
+    The orchestrator downloads `python-3.12.9-embed-amd64.zip` from python.org to `odysseus/bin/python/`. After extraction it:
+
+    1. Edits `python312._pth` to uncomment `import site`, enabling installed packages to be found.
+    2. Downloads `get-pip.py` and runs it to bootstrap pip.
+    3. Creates a mock `venv` module at `Lib/site-packages/venv/__init__.py` so HuggingFace libraries that probe for `venv.EnvBuilder` do not crash.
+    4. Copies `python.exe` to `python3.exe` for Git Bash subshell compatibility.
+
+    ```javascript
+    // Mock venv module for HuggingFace library compatibility
+    const venvDir = path.join(pythonDir, 'Lib', 'site-packages', 'venv');
+    fs.mkdirSync(venvDir, { recursive: true });
+    fs.writeFileSync(path.join(venvDir, '__init__.py'), `class EnvBuilder:
+        def __init__(self, *args, **kwargs): pass
+        def create(self, *args, **kwargs): pass
+    `, 'utf8');
+    ```
+  </Tab>
+  <Tab title="macOS / Linux (uv)">
+    The `uv` binary is downloaded from the Astral GitHub releases to `odysseus/bin/uv-<os>-<arch>` and then copied to `odysseus/bin/uv` as the canonical path. A virtual environment is created at `~/.cache/odysseus-portable/envs/<os-arch>/` using `uv venv --python 3.12`.
+
+    ```javascript
+    execFileSync(canonicalUvPath, ['venv', envDir, '--python', '3.12', '--quiet'],
+      { stdio: 'inherit' });
+    ```
+
+    Packages are installed or updated on every launch with:
+
+    ```javascript
+    execFileSync(uvPath, ['pip', 'install', '--python', pythonExe,
+      '-r', 'requirements.txt', 'bcrypt'], { cwd: odysseusDir, stdio: 'inherit' });
+    ```
+  </Tab>
+</Tabs>
+
+On macOS and Linux, `setupTmux()` also downloads a portable `tmux` binary from `tmux/tmux-builds` releases for background service management. Like `uv`, a platform-specific copy is kept in `odysseus/bin/tmux-<os>-<arch>` and activated by copying to `odysseus/bin/tmux`.
+
+## Shutdown Sequence
+
+SIGINT and SIGTERM are both handled by the same `shutdown(exitCode)` function, which is guarded by an `isExiting` flag so re-entrant calls are ignored:
+
+<Steps>
+  <Step title="Terminate backend processes">
+    Iterates `backend.processes` and calls `runtimeTracker.terminate(pid)` for each, which kills the process and removes its entry from `runtime.json`.
+  </Step>
+  <Step title="Terminate Odysseus web process">
+    Calls `runtimeTracker.terminate(odysseusProcess.pid)`.
+  </Step>
+  <Step title="Close proxy HTTP servers">
+    Iterates `backend.servers` (the in-process Node.js HTTP proxy servers) and calls `.close()` on each.
+  </Step>
+  <Step title="Restore stdout / stderr">
+    Calls `restoreStdoutStderr()` so remaining console output goes directly to the terminal.
+  </Step>
+  <Step title="Close the log stream">
+    Calls `combinedLogStream.end()` to flush and close the combined log file.
+  </Step>
+  <Step title="Clear runtime.json">
+    Calls `runtimeTracker.clear()` to write an empty process list, preventing stale entries from affecting the next launch.
+  </Step>
+  <Step title="Exit">
+    Calls `process.exit(exitCode)` — `0` for user-initiated shutdown, `1` for unexpected subprocess exits.
+  </Step>
+</Steps>
+
+<Warning>
+  If the Node.js process is killed with SIGKILL (e.g., by the OS under memory pressure), the `exit` event handler still attempts cleanup, but `data/runtime.json` may retain PID entries. On the next launch, `cleanupPrevious()` will attempt to kill those PIDs before starting fresh.
+</Warning>
+
+## Error Handling
+
+Two top-level handlers catch errors that escape the async `main()` call:
+
+```javascript
+process.on('uncaughtException', (err) => {
+  console.error('\n[Fatal Error] Uncaught Exception:', err);
+  process.exit(1);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('\n[Fatal Error] Unhandled Rejection:', reason);
+  process.exit(1);
+});
+```
+
+When a subprocess exits unexpectedly, the orchestrator calls `printLogTail(combinedLogPath, 40)` to surface the last 40 lines of the combined log to the terminal before triggering shutdown, making the root cause visible without needing to open a separate log file.

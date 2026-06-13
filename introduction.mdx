@@ -1,0 +1,97 @@
+---
+title: "Odysseus Portable: Local AI Agent Workspace"
+sidebarTitle: "Introduction"
+description: "Odysseus Portable bundles a full local AI workspace and llama.cpp inference into one self-contained folder — no installs, no admin rights, works offline."
+---
+
+Odysseus Portable is a unified, 100% self-contained, offline-first AI agent workspace that requires zero system-level installation. It bundles the Odysseus web UI — a feature-rich, Claude/ChatGPT-like local interface with SQLite-backed memory, calendar integration, custom agents, and deep research capabilities — alongside a dynamic, hardware-optimized [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine. The entire stack lives in a single folder you can copy to a USB drive, external SSD, or any directory and run immediately on Windows, macOS, or Linux without administrator rights.
+
+## What's Included
+
+<CardGroup cols={2}>
+  <Card title="Odysseus Web UI" icon="browser">
+    A premium local chat interface with SQLite memory, calendar, custom agents, deep research, and model management via the Cookbook panel — all accessible at `http://127.0.0.1:7070`.
+  </Card>
+  <Card title="llama.cpp Inference" icon="microchip">
+    A hardware-optimized `llama-server` binary downloaded and cached on first run. Automatically selects CUDA, Vulkan, Metal, or CPU-only execution based on your hardware.
+  </Card>
+  <Card title="Dual Backends" icon="arrows-left-right">
+    Switch between the built-in **llama.cpp GGUF router** for maximum portability or **Ollama** for webapp-managed downloads and model switching — selectable at launch or via environment variable.
+  </Card>
+  <Card title="Cross-Platform" icon="laptop">
+    Native support for Windows (x64, ARM64), macOS Intel and Apple Silicon, and Linux (x64, ARM64). Each OS gets its own isolated runtime directory so one USB drive works on all three.
+  </Card>
+</CardGroup>
+
+## The Portability Guarantee
+
+Every byte Odysseus Portable writes stays inside the project folder. User data, SQLite databases, configuration files, cached model weights, session logs, and secrets never touch system directories, registries, or global environment variables. When you unplug the USB drive or delete the folder, nothing is left behind on the host machine. The launcher's self-contained portable Node.js 22 runtime, portable Python 3.12 environment, and llama-server binary are all downloaded into the project's `bin/` subdirectory on first run — not into system paths.
+
+## How It Works
+
+When you run `start.bat` (Windows) or `./start.sh` (macOS/Linux), the orchestrator at `src/start.js` takes over:
+
+1. **Hardware Scan** — Detects your OS, CPU architecture, total RAM, and GPU. Automatically selects the best inference acceleration: CUDA for NVIDIA GPUs, Metal for Apple Silicon, Vulkan for AMD/Intel/other discrete GPUs, or CPU as the universal fallback.
+2. **Runtime Bootstrap** — Downloads portable Node.js 22, a platform-specific Python 3.12 environment (via `uv` on macOS/Linux, embedded zip on Windows), and a hardware-matched `llama-server` binary — all into `bin/`. This happens once; subsequent launches reuse the cached runtimes.
+3. **Odysseus Sync** — Clones the Odysseus web application from GitHub into the `odysseus/` directory (or fast-forwards it if already present). A suite of self-healing patches is then applied to ensure smooth operation in the portable environment: Windows path support, Cookbook model-directory routing, Ollama dropdown injection, and more.
+4. **Backend Start** — Launches the selected inference backend (llama.cpp router or Ollama) and the Odysseus web server on `127.0.0.1`.
+5. **Browser Launch** — Opens `http://127.0.0.1:7070` in your default browser automatically.
+
+## Odysseus UI Features
+
+The Odysseus web interface provides a full-featured local AI workspace:
+
+<Accordion title="Chat & Memory">
+  Persistent, SQLite-backed conversation memory across sessions. Every chat is stored locally inside the project folder — no cloud sync, no telemetry.
+</Accordion>
+<Accordion title="Calendar & Agents">
+  Built-in calendar integration and a custom agents panel. Create specialized agents with tailored system prompts, tools, and memory scopes.
+</Accordion>
+<Accordion title="Deep Research">
+  A multi-step research mode that chains model calls to plan, search, synthesize, and summarize information — all running locally.
+</Accordion>
+<Accordion title="Cookbook & Model Management">
+  The Cookbook panel lets you download GGUF models directly from Hugging Face, manage local model files, and configure inference servers — all from the browser UI.
+</Accordion>
+
+## Default Ports
+
+| Service | Address | Default Port |
+|---------|---------|--------------|
+| Odysseus Web UI | `http://127.0.0.1` | **7070** |
+| API Proxy | `http://127.0.0.1` | **8080** |
+| llama-server | `http://127.0.0.1` | **10086** |
+
+<Note>
+  If any default port is already in use, the orchestrator automatically finds the next free port and uses that instead. All three services always bind to `127.0.0.1` (localhost only) by default.
+</Note>
+
+## Default Credentials
+
+The Odysseus web interface is protected by username/password authentication. The defaults seeded on first run are:
+
+| Field | Value |
+|-------|-------|
+| Username | `admin` |
+| Password | `techjarves` |
+
+<Warning>
+  **Change the default password immediately after first login.** The password `techjarves` is publicly documented. Anyone with access to your machine or network who can reach port 7070 can log in with these credentials. Update your password in the user profile settings inside the Odysseus web UI.
+</Warning>
+
+## Navigation
+
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Odysseus Portable running on Windows, macOS, or Linux in four steps.
+  </Card>
+  <Card title="Requirements" icon="list-check" href="/requirements">
+    Storage, RAM, OS, and network requirements before you start.
+  </Card>
+  <Card title="Backends" icon="microchip" href="/backends/overview">
+    Compare llama.cpp and Ollama backends, and learn how to switch between them.
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/environment-variables">
+    Environment variables and `launcher_config.json` settings reference.
+  </Card>
+</CardGroup>

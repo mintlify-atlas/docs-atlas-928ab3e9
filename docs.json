@@ -1,72 +1,85 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mintlify Starter Kit",
+  "name": "Odysseus Portable",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#fc0434",
+    "light": "#fc7494"
   },
-  "favicon": "/favicon.svg",
-  "navigation": {
-    "pages": [
-      {
-        "group": "Getting Started",
-        "pages": [
-          "index",
-          "quickstart"
-        ]
-      }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
+  "favicon": "https://media.brand.dev/746c76ba-be12-4a6f-a6b9-54f551403cdf.png",
   "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
     "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://app.mintlify.com"
+      "type": "github",
+      "href": "https://github.com/techjarves/Odysseus-Portable"
     }
-  },
-  "contextual": {
-    "options": [
-      "copy",
-      "view",
-      "chatgpt",
-      "claude",
-      "perplexity",
-      "mcp",
-      "cursor",
-      "vscode"
-    ]
   },
   "footer": {
     "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
+      "github": "https://github.com/techjarves/Odysseus-Portable"
     }
+  },
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "requirements"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/launcher-config",
+              "configuration/huggingface-credentials"
+            ]
+          },
+          {
+            "group": "Inference Backends",
+            "pages": [
+              "backends/overview",
+              "backends/llama-cpp",
+              "backends/ollama"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "models/managing-models",
+              "models/predefined-models",
+              "models/custom-gguf"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/usb-drive-setup",
+              "guides/gpu-acceleration",
+              "guides/updating",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Internals",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "internals/overview",
+              "internals/orchestrator",
+              "internals/hardware-detection",
+              "internals/self-healing-patches"
+            ]
+          }
+        ]
+      }
+    ]
   }
 }

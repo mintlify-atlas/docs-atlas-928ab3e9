@@ -1,20 +1,74 @@
 ---
-title: "Introduction"
-description: "Welcome to your project"
+title: "Odysseus Portable: Offline-First AI Agent Workspace"
+sidebarTitle: "Home"
+description: "Run a full local AI agent workspace from any USB drive or folder — no system installs, no admin rights, no internet required after first setup."
 ---
 
-Write a short description of your product here. What it does, who it's for, and what they can accomplish with it.
+Odysseus Portable bundles the [Odysseus](https://github.com/pewdiepie-archdaemon/odysseus) AI web interface and a hardware-optimized [llama.cpp](https://github.com/ggml-org/llama.cpp) inference engine into a single self-contained directory. Double-click a startup script and you have a local ChatGPT-style workspace running in your browser — without touching your system PATH, installing global packages, or requiring administrator privileges.
 
-<Tip>
-  Ready to make this your own? Start by editing this page. Update your `docs.json` file to customize your site. Then fill out the [Quickstart](/quickstart) page.
-</Tip>
+<CardGroup cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Get Odysseus Portable running on Windows, macOS, or Linux in minutes
+  </Card>
+  <Card title="Requirements" icon="list-check" href="/requirements">
+    Storage, hardware, and platform requirements before you begin
+  </Card>
+  <Card title="Inference Backends" icon="microchip" href="/backends/overview">
+    Choose between llama.cpp (GGUF) and Ollama inference engines
+  </Card>
+  <Card title="Configuration" icon="sliders" href="/configuration/environment-variables">
+    Environment variables, launcher config, and Hugging Face credentials
+  </Card>
+  <Card title="Models" icon="database" href="/models/managing-models">
+    Download, manage, and serve GGUF models from the web UI or models folder
+  </Card>
+  <Card title="Troubleshooting" icon="wrench" href="/guides/troubleshooting">
+    Fix port conflicts, OOM errors, and USB filesystem issues
+  </Card>
+</CardGroup>
 
-<Card title="Quickstart" icon="rocket" href="/quickstart">
-  This card links to the quickstart page in your project.
-</Card>
-<Card title="Components" icon="puzzle-piece" href="https://mintlify.com/docs/components">
-  Add cards, callouts, steps, tabs, and more to design and structure your pages.
-</Card>
-<Card title="Settings" icon="gear" href="https://mintlify.com/docs/organize/settings">
-  Set your site name, branding, and navigation in the `docs.json` file.
-</Card>
+## How It Works
+
+Odysseus Portable's orchestrator handles the entire setup automatically on every launch:
+
+<Steps>
+  <Step title="Hardware scan">
+    Detects your OS, CPU architecture, RAM, and GPU (CUDA / Vulkan / Metal / CPU-only) to select the right inference binary.
+  </Step>
+  <Step title="Runtime bootstrap">
+    Downloads and caches portable Node.js 22, Python 3.12, and a hardware-matched `llama-server` binary — only on first run. Subsequent launches are instant.
+  </Step>
+  <Step title="Source sync">
+    Clones or updates the Odysseus web application from GitHub, then applies self-healing patches to ensure USB-portable compatibility.
+  </Step>
+  <Step title="Launch">
+    Starts the inference backend and Odysseus web server, then opens `http://127.0.0.1:7070` in your default browser.
+  </Step>
+</Steps>
+
+## Key Features
+
+<CardGroup cols={2}>
+  <Card title="Zero System Dependencies" icon="box-open">
+    Node.js, Python, and llama-server are all downloaded into the project folder. Nothing is installed globally.
+  </Card>
+  <Card title="GPU Acceleration" icon="bolt">
+    Automatically selects CUDA, Vulkan, Metal, or CPU inference based on detected hardware. No manual configuration needed.
+  </Card>
+  <Card title="Dual Backends" icon="shuffle">
+    Switch between llama.cpp (GGUF router with auto context scaling) and Ollama with a single environment variable.
+  </Card>
+  <Card title="Data Portability" icon="hard-drive">
+    All user data, models, chat history, and credentials stay inside the project folder. Unplugging leaves no trace on the host.
+  </Card>
+  <Card title="Cross-Platform" icon="laptop">
+    Runs on Windows, macOS (Intel & Apple Silicon), and Linux (x64 & ARM64) from the same directory.
+  </Card>
+  <Card title="USB Drive Ready" icon="usb">
+    Handles exFAT/FAT32 filesystem limitations automatically with symlink-to-hardlink fallback.
+  </Card>
+</CardGroup>
+
+<Note>
+  **Data Portability Guarantee** — All databases, config files, cached runtimes, and GGUF models live inside the project folder. Unplugging your USB drive leaves no configuration traces, files, or environment variables on the host system.
+</Note>

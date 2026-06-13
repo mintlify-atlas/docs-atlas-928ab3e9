@@ -1,0 +1,107 @@
+{
+  "projectType": "cli-tool",
+  "projectName": "Odysseus Portable",
+  "projectDescription": "A 100% self-contained, offline-first AI agent workspace that bundles the Odysseus web UI and a hardware-optimized llama.cpp inference engine, running portably from any directory or USB drive without requiring pre-installed system dependencies.",
+  "theme": "palm",
+  "primaryColor": "#fc0434",
+  "lightColor": "#fc7494",
+  "darkColor": null,
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "quickstart",
+              "requirements"
+            ]
+          },
+          {
+            "group": "Configuration",
+            "pages": [
+              "configuration/environment-variables",
+              "configuration/launcher-config",
+              "configuration/huggingface-credentials"
+            ]
+          },
+          {
+            "group": "Inference Backends",
+            "pages": [
+              "backends/overview",
+              "backends/llama-cpp",
+              "backends/ollama"
+            ]
+          },
+          {
+            "group": "Models",
+            "pages": [
+              "models/managing-models",
+              "models/predefined-models",
+              "models/custom-gguf"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/usb-drive-setup",
+              "guides/gpu-acceleration",
+              "guides/updating",
+              "guides/troubleshooting"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "Internals",
+        "groups": [
+          {
+            "group": "Architecture",
+            "pages": [
+              "internals/overview",
+              "internals/orchestrator",
+              "internals/hardware-detection",
+              "internals/self-healing-patches"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Zero system dependencies — all runtimes (Node.js 22, Python 3.12, llama-server) downloaded and cached portably",
+    "Hardware-aware inference: automatic GPU detection (CUDA, Vulkan, Metal, CPU) with matching llama.cpp binary selection",
+    "Dual inference backends: llama.cpp (GGUF router with auto context scaling) and Ollama",
+    "Auto context window sizing based on available VRAM/RAM and loaded model size",
+    "Self-healing code patches applied on every launch to keep the Odysseus web UI compatible with portable mode",
+    "Data portability guarantee: all user data, models, and configs stay inside the project folder",
+    "Automatic Odysseus source cloning and git pull on every startup",
+    "Port conflict detection with automatic fallback to next free port",
+    "Cross-platform support: Windows, macOS (Intel & Apple Silicon), Linux (x64 & ARM64)",
+    "USB/exFAT drive compatibility with symlink-to-hardlink fallback"
+  ],
+  "publicApiSurface": [
+    "start.bat — Windows entry point",
+    "start.sh — macOS/Linux entry point",
+    "node src/start.js --backend=llama|ollama — programmatic backend selection",
+    "ODYSSEUS_BACKEND env var — select llama or ollama backend",
+    "ODYSSEUS_PORT env var — override web UI port (default 7070)",
+    "ODYSSEUS_PROXY_PORT env var — override API proxy port (default 8080)",
+    "ODYSSEUS_LLAMA_PORT env var — override llama-server port (default 10086)",
+    "ODYSSEUS_LLAMA_CTX env var — force specific llama.cpp context window size",
+    "ODYSSEUS_LLAMA_PARALLEL env var — set parallel inference slots (default 1)",
+    "ODYSSEUS_ADMIN_USER env var — custom admin username (default: admin)",
+    "ODYSSEUS_ADMIN_PASSWORD env var — custom admin password (default: techjarves)",
+    "data/launcher_config.json — persistent launcher settings file",
+    "models/ — directory for GGUF model files",
+    "src/system.js detectHardware() — OS/CPU/GPU/RAM scanner",
+    "src/downloader.js downloadFile(), extractArchive(), getLlamaCppAssets() — download utilities",
+    "src/backends/llama/index.js startLlamaBackend() — llama.cpp backend launcher",
+    "src/backends/ollama/index.js startOllamaBackend() — Ollama backend launcher",
+    "src/backends/common.js seedPortableEndpoint() — SQLite endpoint seeder",
+    "src/bootstrap/git.js ensureOdysseusSource() — Odysseus repo bootstrapper",
+    "src/runtime.js createRuntimeTracker() — subprocess lifecycle manager"
+  ]
+}

@@ -1,0 +1,358 @@
+---
+title: "Self-Healing Patches Applied to Odysseus Source"
+sidebarTitle: "Self-Healing Patches"
+description: "Runtime patches re-applied after every git pull to keep Odysseus working portably on Windows, macOS, and Linux without forking the upstream repository."
+---
+
+Odysseus Portable does not fork the upstream Odysseus repository. Instead, it clones the official source on first launch and pulls updates on every subsequent launch — then immediately applies a set of targeted, idempotent patches to the checked-out files. This architecture lets the portable bundle track upstream bug fixes, new models, and UI improvements automatically, while still injecting the handful of changes required to make Odysseus work from a USB drive on any OS without a system installation.
+
+## Why Patches Instead of a Fork?
+
+Maintaining a fork of an actively developed project requires rebasing onto upstream regularly — a process that introduces merge conflicts, delays, and the risk of accidentally shipping a stale codebase. Patches sidestep that entirely: after each `git pull --ff-only`, the orchestrator re-applies every patch function in sequence. Because each patch checks for its target string before making any change, running them on an already-patched file is completely harmless.
+
+The files modified by patches are listed in `generatedPatchFiles` in `src/start.js`:
+
+```javascript
+const generatedPatchFiles = [
+  path.join('routes', 'cookbook_helpers.py'),
+  path.join('routes', 'cookbook_routes.py'),
+  path.join('static', 'js', 'cookbookRunning.js'),
+  path.join('static', 'js', 'cookbook.js'),
+  path.join('static', 'js', 'cookbook-hwfit.js')
+];
+```
+
+Before running `git pull`, `ensureOdysseusSource()` calls `git restore -- <patchFiles>` on this list, discarding any modifications from the previous session and returning the files to their upstream state. The pull then applies cleanly, and the patch functions run again immediately afterward.
+
+<Note>
+  All patches are idempotent. Each function checks whether its target string is present in the file before making any modification. Re-running a patch on an already-patched file is a no-op — no string will be duplicated and no error will be raised.
+</Note>
+
+## Patch Reference
+
+<AccordionGroup>
+  <Accordion title="patchCookbookHelpers — Windows path support">
+    Applies two independent fixes to `routes/cookbook_helpers.py`.
+
+    **Fix 1 — Windows `Scripts/` in PATH export**
+
+    The upstream `_local_tooling_path_export` function constructs a `export PATH=...` string that adds a virtual environment's root directory to `PATH`. On Windows, executable scripts installed by pip live in `<venv>/Scripts/`, not the venv root itself. Without this fix, installed CLI tools are invisible to subshells.
+
+    The patch detects whether the current platform or the venv path matches a Windows drive pattern and appends `/Scripts` to the exported PATH:
+
+    ```python
+    # Before
+    return f'export PATH="{esc}:$PATH"'
+
+    # After
+    from core.platform_compat import IS_WINDOWS
+    if IS_WINDOWS or _WINDOWS_DRIVE_PATH_RE.match(executable):
+        return f'export PATH="{esc}:{esc}/Scripts:$PATH"'
+    return f'export PATH="{esc}:$PATH"'
+    ```
+
+    **Fix 2 — Windows drive path regex for `_LOCAL_DIR_RE`**
+
+    The upstream regex that validates local directory paths only accepts Unix-style absolute paths (starting with `/` or `~`). Paths like `C:\Users\alice\models` fail validation and cause download requests to be rejected.
+
+    The patch extends `_LOCAL_DIR_RE` to also accept Windows drive paths:
+
+    ```python
+    # Before
+    _LOCAL_DIR_RE = re.compile(r"^~?/[A-Za-z0-9._/-]*$|^~$")
+
+    # After
+    _LOCAL_DIR_RE = re.compile(
+        r"^~?/[A-Za-z0-9._/ -]*$|^~$|^[A-Za-z]:[\\/][A-Za-z0-9._/\\ -]*$"
+    )
+    ```
+
+    It also adds a backslash normalisation step before the path is validated, converting `\\` to `/` so the regex matches consistently.
+  </Accordion>
+
+  <Accordion title="patchCookbookRoutes — HF token handling">
+    Applies two independent fixes to `routes/cookbook_routes.py`.
+
+    **Fix 1 — Mojibake in Windows log messages**
+
+    The upstream source contains a Unicode em-dash (`—`) inside an `echo` string that is written to a subprocess shell script. On Windows, the process code page may not be UTF-8, causing the em-dash to be mis-encoded and displayed as garbled characters in logs. The patch replaces it with a plain ASCII hyphen:
+
+    ```python
+    # Before
+    echo "[odysseus] HF token: NOT SET — gated/private models will be denied.
+
+    # After
+    echo "[odysseus] HF token: NOT SET - gated/private models will be denied.
+    ```
+
+    **Fix 2 — HuggingFace token fallback chain**
+
+    The upstream `_load_stored_hf_token()` only reads the token from the Cookbook UI state file. If a user already has a token set in the standard HuggingFace CLI location or an environment variable, it is ignored. The patch rewrites the function to check four sources in priority order:
+
+    ```python
+    def _load_stored_hf_token() -> str:
+        # 1. Cookbook UI state file
+        try:
+            if _cookbook_state_path.exists():
+                state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+                env = state.get("env") if isinstance(state, dict) else {}
+                token = _decrypt_secret(env.get("hfToken") if isinstance(env, dict) else "")
+                if token:
+                    return token
+        except Exception:
+            pass
+        # 2. HF_TOKEN / HUGGING_FACE_HUB_TOKEN environment variables
+        for key in ("HF_TOKEN", "HUGGING_FACE_HUB_TOKEN"):
+            token = (os.environ.get(key) or "").strip()
+            if token:
+                return token
+        # 3. ~/.cache/huggingface/token and ~/.huggingface/token
+        for token_path in (
+            Path.home() / ".cache" / "huggingface" / "token",
+            Path.home() / ".huggingface" / "token",
+        ):
+            try:
+                token = token_path.read_text(encoding="utf-8").strip()
+                if token:
+                    return token
+            except Exception:
+                pass
+        return ""
+    ```
+  </Accordion>
+
+  <Accordion title="patchCookbookStateNormalizer — Portable model directory default">
+    Patches `static/js/cookbookRunning.js` to change how the default HuggingFace hub cache is injected into the `modelDirs` list.
+
+    The upstream code unconditionally prepends `~/.cache/huggingface/hub` to the model directory list on every state normalisation. In portable mode, the canonical model store is the project's `models/` folder and the global HuggingFace cache may not exist or may contain irrelevant downloads.
+
+    ```javascript
+    // Before — always injects the global HF cache at position 0
+    if (!dirs.includes('~/.cache/huggingface/hub')) dirs.unshift('~/.cache/huggingface/hub');
+
+    // After — only injects the global HF cache when no dirs are configured at all
+    if (!dirs.length) dirs.push('~/.cache/huggingface/hub');
+    ```
+
+    This means a fresh Odysseus Portable install that has never had `modelDirs` configured will still get a sensible fallback, but once `configureCookbookState()` has written the portable `models/` path into state, it is not displaced by the global cache.
+  </Accordion>
+
+  <Accordion title="patchCookbookPortableServeScan — Serve tab scan scope">
+    Patches `routes/cookbook_helpers.py` to restrict model discovery in the Serve tab to the configured `model_dirs` only, rather than scanning every known HuggingFace cache path on the host machine.
+
+    The upstream code always scans all paths returned by `hf_cache_paths()` (which includes `~/.cache/huggingface/hub`, `~/AppData/Local/huggingface/hub`, etc.) regardless of what `model_dirs` is set to. On a USB drive, those global caches may hold partial downloads from unrelated projects and would appear as confusing entries in the Serve tab.
+
+    The patch makes global HF cache scanning conditional: it only happens when `model_dirs` is empty. When model directories are configured, the patch instead constructs per-directory scan calls that look inside each configured directory for `hub/` and `xet/` subdirectories.
+
+    It also adds a guard inside the generated scan loop to skip `hub` and `xet` directory names themselves from appearing as model candidates:
+
+    ```python
+    "if d.startswith('models--'): continue",
+    "if d in ('hub', 'xet'): continue",  # added by patch
+    ```
+  </Accordion>
+
+  <Accordion title="patchCookbookWindowsLlamaServer — Native binary on Windows">
+    Patches `static/js/cookbook.js` to use the native `llama-server.exe` binary on Windows when constructing the Serve tab's launch command, instead of falling back to `python -m llama_cpp.server`.
+
+    The upstream code distinguishes Windows from other platforms and uses the Python package as the Windows path because it cannot assume a native binary is present. Odysseus Portable ships a precompiled `llama-server.exe` in `bin/llama/`, so the Python fallback is unnecessary and significantly slower.
+
+    The patch replaces both the Windows and Unix branches to use the native `llama-server` command, with the Python module as a fallback only on Unix:
+
+    ```javascript
+    // Before
+    if (_isWindows()) {
+      cmd += `${lcPrefix}${py} -m llama_cpp.server ...`;
+    } else {
+      cmd += `${lcPrefix}llama-server ...`;
+      cmd += ` || ${_lcpServer}`;
+    }
+
+    // After
+    const _nativeServer = `${lcPrefix}llama-server --model ${modelArg} ...`;
+    if (_isWindows()) {
+      cmd += _nativeServer;          // always use native binary
+    } else {
+      cmd += _nativeServer;
+      cmd += ` || ${_lcpServer}`;    // keep Python fallback on Unix only
+    }
+    ```
+
+    The patch also appends `--reasoning off` to the native server arguments, which suppresses reasoning-mode output that is not used in the standard Cookbook workflow.
+  </Accordion>
+
+  <Accordion title="patchLlamaRouterContext — Context size adjustment">
+    Patches `src/backends/llama/index.js` (inside the Odysseus Portable source, not the Odysseus web app) to lower the default llama-server context size from 16 384 to 12 288 tokens.
+
+    ```javascript
+    // Before
+    '--ctx-size', '16384'
+
+    // After
+    '--ctx-size', '12288'
+    ```
+
+    A 16 K context requires roughly 2–3 GB of VRAM or RAM depending on the model's key-value cache size. Reducing to 12 K provides a more comfortable fit on 8 GB systems, where a large model plus a 16 K context would otherwise push the machine into heavy swap usage and cause unresponsive inference.
+  </Accordion>
+
+  <Accordion title="patchCookbookCachedRoutePortableFallback — /api/model/cached without model_dir">
+    Patches `routes/cookbook_routes.py` to handle `GET /api/model/cached` requests that arrive without a `model_dir` query parameter from a local (non-remote) client.
+
+    In the upstream implementation, a missing `model_dir` on a local request returns an empty result because there is no configured local directory to scan. In portable mode, the canonical model directory is stored in `cookbook_state.json`, so the patch reads it from there as a fallback:
+
+    ```python
+    elif not host:
+        try:
+            state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+            ...
+            local_server = next((s for s in servers if not s.get("host")), None)
+            if local_server:
+                for d in local_server.get("modelDirs") or [local_server.get("modelDir")]:
+                    if d and d != "~/.cache/huggingface/hub":
+                        model_dirs.append(translate_path(str(d)))
+        except Exception:
+            model_dirs = []
+    ```
+
+    The guard `d != "~/.cache/huggingface/hub"` prevents the global HuggingFace cache from being injected as the scan target when it has been left in state as a default value.
+  </Accordion>
+
+  <Accordion title="patchCookbookOllamaDropdown — Ollama engine option in UI">
+    Applies two related patches: one to `static/js/cookbook.js` and one to `static/js/cookbook-hwfit.js`.
+
+    **cookbook.js — Add Ollama option to engine dropdown**
+
+    The upstream Cookbook UI only lists llama.cpp as a local inference engine option. Odysseus Portable also supports Ollama, so the patch appends an Ollama option immediately after the existing llama.cpp entry:
+
+    ```javascript
+    // Before
+    html += '<option value="llamacpp">llama.cpp</option>';
+
+    // After
+    html += '<option value="llamacpp">llama.cpp</option>';
+    html += '<option value="ollama">Ollama</option>';
+    ```
+
+    **cookbook-hwfit.js — Hardware-fit filter for Ollama**
+
+    The hardware fitness filter rejects models whose detected backend does not match the selected engine. The upstream logic fails for Ollama-selected sessions because it checks for an exact `'ollama'` backend match, but most GGUF models are detected as `'llamacpp'` — and Ollama can serve GGUF models too.
+
+    The patch adjusts the filter so that when Ollama is the selected engine, both `'ollama'` and `'llamacpp'` models are shown:
+
+    ```javascript
+    // Before
+    try { return _detectBackend(m).backend === want; } catch { return true; }
+
+    // After
+    try {
+      const detected = _detectBackend(m).backend;
+      if (want === 'ollama') {
+        return detected === 'ollama' || detected === 'llamacpp';
+      }
+      return detected === want;
+    } catch {
+      return true;
+    }
+    ```
+  </Accordion>
+
+  <Accordion title="patchCookbookLocalServerFix — Local server object resolution">
+    Patches `static/js/cookbook.js` to fix two functions that resolve the active server object from the environment state.
+
+    **`getServerByVal` fix**
+
+    The upstream implementation returns `null` when `val` is `'local'` or an empty string, which means the Local server is never resolved by value. The patch replaces the early return with an actual lookup:
+
+    ```javascript
+    // Before
+    if (val == null || val === 'local' || val === '') return null;
+
+    // After
+    if (val == null) return null;
+    if (val === 'local' || val === '') {
+      return _envState.servers.find(
+        x => x.name === 'Local' || x.host === '' || x.host === 'local'
+      ) || null;
+    }
+    ```
+
+    **`getSelectedServer` fix**
+
+    When no remote host is set, the upstream function returns `null` instead of the Local server object. The patch adds a final fallback that finds the server with an empty, missing, or `'local'` host field:
+
+    ```javascript
+    // Before
+    if (_envState.remoteHost) return _envState.servers.find(...) || null;
+    return null;
+
+    // After
+    if (_envState.remoteHost) return _envState.servers.find(...) || null;
+    return _envState.servers.find(
+      s => !s.host || s.host === 'local' || s.name === 'Local'
+    ) || null;
+    ```
+  </Accordion>
+
+  <Accordion title="patchCookbookRoutesBackendFallback — Download directory fallback">
+    Patches `routes/cookbook_routes.py` to inject a fallback download directory when a download request arrives with no `local_dir` and no remote host.
+
+    The upstream validation raises an error if `local_dir` is missing for a local download. The patch inserts a fallback step before validation that reads the download directory from `cookbook_state.json`:
+
+    ```python
+    # Self-healing fallback: If UI cache sends no local_dir for a local download, read from state
+    if not is_ollama_download and not req.local_dir and not req.remote_host:
+        try:
+            if _cookbook_state_path.exists():
+                _state = json.loads(_cookbook_state_path.read_text(encoding="utf-8"))
+                _srvs = _state.get("env", {}).get("servers", [])
+                if _srvs and _srvs[0].get("downloadDir"):
+                    req.local_dir = _srvs[0]["downloadDir"]
+        except Exception:
+            pass
+
+    req.local_dir = _validate_local_dir(req.local_dir)
+    ```
+
+    This handles the case where the frontend is running from a cached page state and has not yet re-hydrated the server configuration from the backend, which can happen immediately after launch before the first full state sync.
+  </Accordion>
+
+  <Accordion title="configureCookbookState — Portable model directory initialisation">
+    This is not a patch in the string-replacement sense — it is a JSON state writer that runs after all patch functions on every launch. `configureCookbookState(odysseusDir, projectRoot)` writes or updates `odysseus/data/cookbook_state.json` to ensure the Local server's model and download directories always point to the portable `models/` folder.
+
+    On first launch, it creates the full state structure. On subsequent launches, it reads the existing file, preserves all user-defined settings (tasks, presets, credentials, remote servers), finds the Local server entry, and updates only the three directory fields:
+
+    ```javascript
+    localServer.modelDir    = modelsDirPosix;   // absolute path to models/
+    localServer.modelDirs   = [modelsDirPosix];
+    localServer.downloadDir = modelsDirPosix;
+    localServer.platform    = platformName;      // 'windows' | 'macos' | 'linux'
+    ```
+
+    The `platform` field is also refreshed on every launch so the Cookbook frontend uses the correct path separator and shell command format for the current operating system — important when the same drive is used on both Windows and macOS.
+  </Accordion>
+</AccordionGroup>
+
+## Patch Execution Order
+
+The orchestrator calls patch functions in a fixed order immediately after `ensureOdysseusSource()` returns:
+
+```javascript
+patchCookbookHelpers(odysseusDir);
+patchCookbookRoutes(odysseusDir);
+patchCookbookStateNormalizer(odysseusDir);
+patchCookbookPortableServeScan(odysseusDir);
+patchCookbookWindowsLlamaServer(odysseusDir);
+patchLlamaRouterContext(projectRoot);
+patchCookbookCachedRoutePortableFallback(odysseusDir);
+patchCookbookOllamaDropdown(odysseusDir);
+patchCookbookLocalServerFix(odysseusDir);
+patchCookbookRoutesBackendFallback(odysseusDir);
+// configureCookbookState runs last, after Python setup
+configureCookbookState(odysseusDir, projectRoot);
+```
+
+`configureCookbookState` runs later in the startup sequence, after the Python environment is set up and `setup.py` has initialised the database, to ensure the `data/` directory exists before the state file is written.
+
+<Warning>
+  If an upstream Odysseus update restructures one of the patched files significantly, a patch's target string may no longer be present and the patch will emit a `[Odysseus Warning]` message but will not crash the startup. In that case the relevant portable-mode feature will revert to upstream behaviour until the patch is updated to match the new code structure.
+</Warning>

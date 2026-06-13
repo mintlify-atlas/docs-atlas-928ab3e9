@@ -1,0 +1,98 @@
+---
+title: "Managing GGUF Models in Odysseus Portable"
+sidebarTitle: "Managing Models"
+description: "Learn how to add, remove, and switch GGUF models in Odysseus Portable — via the web UI Cookbook, drag-and-drop, or the model selection prompt."
+---
+
+The `models/` folder at the project root is the single source of truth for all GGUF models in Odysseus Portable. When the llama.cpp backend starts, `llama-server` is launched with `--models-dir models/`, which causes it to scan that directory recursively and register every `.gguf` file it finds. This means you never need to edit a config file or pass a model path manually — simply placing a GGUF file anywhere inside `models/` is enough for Odysseus to detect and serve it.
+
+## Adding Models
+
+There are three supported ways to bring a model into your workspace:
+
+<Steps>
+  <Step title="Web UI Cookbook">
+    Open the Odysseus web interface at `http://127.0.0.1:7070` and navigate to the **Models / Cookbook** tab. From there you can search for and download any Hugging Face GGUF model directly into the `models/` folder without leaving the browser. The Cookbook handles authentication (if you have a `HUGGING_FACE_HUB_TOKEN` set) and progress tracking automatically.
+  </Step>
+  <Step title="Drag and Drop">
+    Copy any `.gguf` file directly into the `models/` folder — or into a subfolder of your choosing. The file will be picked up the next time the backend starts or reloads. No renaming or registration is required.
+
+    ```text
+    models/
+      my-model.gguf
+      another-model.gguf
+    ```
+  </Step>
+  <Step title="First-Launch CLI Prompt">
+    On the very first run with the llama.cpp backend (or any time the `models/` folder is empty), the orchestrator pauses and shows an interactive terminal menu. It lists both any locally detected GGUF files and a curated set of predefined models available for download from Hugging Face. Select a number and press Enter — the orchestrator downloads the file and places it in `models/` before starting `llama-server`.
+  </Step>
+</Steps>
+
+## Directory Structure
+
+Flat GGUF files placed directly at the top level of `models/` are available immediately with no additional processing:
+
+```text
+models/
+  my-model.gguf
+  another-model.gguf
+```
+
+When the Odysseus Cookbook downloads a model from Hugging Face, it mirrors the standard HF hub cache layout inside a `hub/` subfolder:
+
+```text
+models/
+  hub/
+    models--Qwen--Qwen2.5-Coder-7B-Instruct-GGUF/
+      snapshots/
+        abc1234.../
+          qwen2.5-coder-7b-instruct-q4_k_m.gguf
+```
+
+### Flat Symlinks and Hardlinks
+
+Because `llama-server` works best with flat model paths, the orchestrator automatically creates a flat symlink (or a hardlink on FAT32/exFAT drives that do not support symlinks) at the top level of `models/` for every nested GGUF it discovers:
+
+```text
+models/
+  Qwen--Qwen2.5-Coder-7B-Instruct-GGUF.gguf   ← symlink / hardlink
+  hub/
+    models--Qwen--Qwen2.5-Coder-7B-Instruct-GGUF/
+      snapshots/
+        abc1234.../
+          qwen2.5-coder-7b-instruct-q4_k_m.gguf
+```
+
+These flat links are regenerated on every launch, so you never need to manage them by hand.
+
+<Note>
+  GGUF file sizes vary widely by model family and quantization level — from roughly **400 MB** for a 0.5B Q4 model up to **5 GB** for a 7B Q4 model. Plan your drive capacity accordingly. A 64 GB or 128 GB USB 3.0 SSD is recommended if you intend to keep multiple models available at once.
+</Note>
+
+## Switching Models
+
+Odysseus Portable starts `llama-server` with `--models-max 1`, which means only one model occupies memory at a time. When a request arrives that targets a different model ID, `llama-server` unloads the current model and loads the requested one **without requiring a server restart**. The proxy layer handles model ID rewriting transparently, so your API client simply uses a standard Hugging Face repo identifier (e.g. `Qwen/Qwen2.5-Coder-7B-Instruct-GGUF`) and the backend takes care of the rest.
+
+<Tabs>
+  <Tab title="Via API">
+    Send a chat completion request specifying the target model by its Hugging Face repo ID. The proxy rewrites it to the correct local filename automatically:
+
+    ```json
+    {
+      "model": "Qwen/Qwen2.5-Coder-7B-Instruct-GGUF",
+      "messages": [{ "role": "user", "content": "Hello!" }]
+    }
+    ```
+  </Tab>
+  <Tab title="Via Odysseus UI">
+    In the Odysseus chat interface, open the model selector dropdown at the top of any conversation and choose a different model. The UI sends the updated model ID to the API and `llama-server` swaps the loaded model on the next request.
+  </Tab>
+</Tabs>
+
+## Removing Models
+
+To remove a model, delete its `.gguf` file from the `models/` folder (or subfolder). Because flat symlinks and hardlinks are fully regenerated on every launch, any stale top-level links that pointed to the deleted file are cleaned up automatically the next time the orchestrator starts. You do not need to track or delete the links yourself.
+
+<Warning>
+  Do not delete a `.gguf` file while `llama-server` has it loaded — in-flight requests will fail. Stop the workspace first (close the terminal or run the shutdown script), delete the file, then restart.
+</Warning>

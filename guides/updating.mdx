@@ -1,0 +1,131 @@
+---
+title: "Updating Odysseus Portable and the Web UI"
+sidebarTitle: "Updating"
+description: "How to update the Odysseus Portable launcher scripts and the Odysseus web application — auto-updates on launch plus manual git pull instructions."
+---
+
+Odysseus Portable has two independent codebases that update separately: the **launcher orchestrator** (the `src/`, `start.sh`, and `start.bat` files in this repository) and the **Odysseus web application** (cloned into the `odysseus/` subdirectory). Understanding the distinction helps you apply the right update method and avoid unexpected state after an upgrade.
+
+## The Two Update Paths
+
+<CardGroup cols={2}>
+  <Card title="Launcher Orchestrator" icon="wrench">
+    Updated manually with `git pull`. Controls hardware detection, binary downloads, port selection, and self-healing patches.
+  </Card>
+  <Card title="Odysseus Web App" icon="rotate">
+    Updated automatically on every launch when internet is available. Runs `git pull --ff-only` inside the `odysseus/` directory.
+  </Card>
+</CardGroup>
+
+## Updating the Launcher Orchestrator
+
+The launcher scripts (`start.bat`, `start.sh`) and orchestrator source code in `src/` are **not** auto-updated. To get the latest launcher features, bug fixes, and self-healing patches, run a standard `git pull` from the root of the `Odysseus-Portable` directory.
+
+```bash
+# In the Odysseus-Portable root directory
+git pull
+```
+
+This updates:
+- `start.sh` and `start.bat`
+- Everything inside `src/` (hardware detection, downloader, backend logic, self-healing patches)
+- Default configuration templates
+
+<Note>
+  If you have made local edits to any files in `src/`, resolve any merge conflicts after pulling. The launcher does not auto-merge or overwrite your custom changes.
+</Note>
+
+## Automatic Web App Updates
+
+Every time the orchestrator starts, it checks whether `odysseus/.git` exists. If it does, the orchestrator runs two git commands inside the `odysseus/` directory before starting any services:
+
+<Steps>
+  <Step title="Restore patched files">
+    Before pulling, the orchestrator calls `git restore` on the specific files it modifies via self-healing patches. This ensures those files are in their upstream state so the pull applies cleanly:
+
+    ```bash
+    git restore -- routes/cookbook_helpers.py
+    git restore -- routes/cookbook_routes.py
+    git restore -- static/js/cookbookRunning.js
+    git restore -- static/js/cookbook.js
+    git restore -- static/js/cookbook-hwfit.js
+    ```
+  </Step>
+
+  <Step title="Pull upstream changes">
+    The orchestrator then runs a fast-forward-only pull:
+
+    ```bash
+    git pull --ff-only
+    ```
+
+    The `--ff-only` flag means the pull is skipped if it cannot be applied as a simple fast-forward. This protects any local customizations you have made to files not in the patch list — they will never be silently overwritten.
+  </Step>
+
+  <Step title="Re-apply self-healing patches">
+    After the pull succeeds, the orchestrator immediately re-applies all self-healing patches to the restored files. The patched state is what actually runs; it is never committed back to git.
+  </Step>
+</Steps>
+
+## What Self-Healing Patches Do
+
+The orchestrator maintains a set of runtime patches that adapt the upstream Odysseus web app for the portable environment. These patches are re-applied on every launch after each `git pull`. The files they modify are:
+
+| File | What the patch does |
+|---|---|
+| `routes/cookbook_helpers.py` | Adds Windows `Scripts` path support and allows Windows drive-letter paths as download directories |
+| `routes/cookbook_routes.py` | Extends HF token lookup to read from `odysseus/.env`, environment variables, and `~/.cache/huggingface/token` |
+| `static/js/cookbookRunning.js` | Prevents the upstream HuggingFace cache from being prepended to model directories when a portable models folder is already configured |
+| `static/js/cookbook.js` | Adds the Ollama engine option to the dropdown and uses the native `llama-server` binary on Windows instead of `python -m llama_cpp.server` |
+| `static/js/cookbook-hwfit.js` | Extends the engine filter to correctly show llama.cpp models when Ollama mode is selected |
+
+<Note>
+  Because these patches are re-applied after every pull, you do not need to manually re-patch after an Odysseus upstream update. The orchestrator handles it automatically.
+</Note>
+
+## Updating Cached Runtimes
+
+Node.js, Python (or `uv`), and `llama-server` binaries are downloaded once and cached in the `bin/` directory. They are not automatically updated on subsequent launches. To pick up a newer version of any runtime:
+
+<Accordion title="Force re-download of a specific runtime">
+  Delete the platform-specific subdirectory for the runtime you want to refresh, then relaunch. The orchestrator will re-download and re-extract it on the next startup.
+
+  ```bash
+  # Delete the llama-server binary (macOS ARM64 example)
+  rm -rf bin/llama-macos-arm64/
+
+  # Delete Node.js (Linux x64 example)
+  rm -rf bin/node-linux-x64/
+
+  # Windows — delete from the project folder
+  rmdir /s /q bin\llama
+  rmdir /s /q bin\node
+  ```
+</Accordion>
+
+<Accordion title="Force re-download of all runtimes">
+  Delete the entire `bin/` directory. The orchestrator will re-download everything from scratch on the next launch.
+
+  ```bash
+  # macOS / Linux
+  rm -rf bin/
+
+  # Windows
+  rmdir /s /q bin
+  ```
+
+  Expect the next launch to take several minutes while binaries are re-fetched.
+</Accordion>
+
+## Updating in Offline Environments
+
+If no internet connection is available when the orchestrator starts, the web app update step is skipped silently. The existing local `odysseus/` source is used as-is, and any runtimes already cached in `bin/` continue to work normally. There is no error or warning for missing internet — the orchestrator simply proceeds with what it has.
+
+<Warning>
+  After a major Odysseus upstream release, the web UI frontend JavaScript and CSS may be cached in your browser from the previous version. If you see unexpected UI glitches or stale interface elements after an update, perform a hard refresh to clear the browser cache:
+
+  - **Windows / Linux**: `Ctrl + Shift + R`
+  - **macOS**: `Cmd + Shift + R`
+
+  If that does not resolve it, clear the browser's site data for `127.0.0.1` in your browser's developer settings.
+</Warning>

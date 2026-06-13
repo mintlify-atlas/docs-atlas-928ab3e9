@@ -1,0 +1,105 @@
+---
+title: "Persist Settings with launcher_config.json"
+sidebarTitle: "Launcher Config"
+description: "The launcher_config.json file persists your backend choice and port overrides across restarts, so you don't need to set environment variables every time."
+---
+
+Rather than prepending environment variables to every launch command, Odysseus Portable provides a lightweight JSON configuration file that the orchestrator reads at startup and writes to automatically. The file lives at `data/launcher_config.json` inside the project folder and is created on the very first launch. Because it is just a plain JSON file, you can open it in any text editor and change it between runs — no special tooling required. Environment variables and CLI flags always win over whatever is stored here, so you can still use one-off overrides without touching the file.
+
+## File Location
+
+```
+Odysseus-Portable/
+└── data/
+    └── launcher_config.json   ← edit this file to set persistent defaults
+```
+
+The `data/` directory is created automatically if it does not exist. If `launcher_config.json` is missing or cannot be parsed, the orchestrator logs a warning and falls back to its built-in defaults.
+
+---
+
+## Supported Fields
+
+<ParamField body="backend" type="string">
+  Inference backend to use on every launch. Accepted values: `"llama"` or `"ollama"`. When this field is present and valid, the interactive backend-selection prompt is skipped entirely.
+</ParamField>
+
+<ParamField body="webPort" type="number">
+  Preferred port for the Odysseus web UI. Equivalent to the `ODYSSEUS_PORT` environment variable. Default: `7070`.
+</ParamField>
+
+<ParamField body="proxyPort" type="number">
+  Preferred port for the API proxy server. Equivalent to `ODYSSEUS_PROXY_PORT`. Default: `8080`.
+</ParamField>
+
+<ParamField body="llamaPort" type="number">
+  Preferred port for the `llama-server` process (llama.cpp backend only). Equivalent to `ODYSSEUS_LLAMA_PORT`. Default: `10086`.
+</ParamField>
+
+---
+
+## Example File
+
+A fully populated `data/launcher_config.json` looks like this:
+
+```json
+{
+  "backend": "llama",
+  "webPort": 7070,
+  "proxyPort": 8080,
+  "llamaPort": 10086
+}
+```
+
+You can omit any field you want to keep at its default. For example, to only pin the backend without touching the ports:
+
+```json
+{
+  "backend": "ollama"
+}
+```
+
+---
+
+## Precedence Order
+
+When the same setting is specified in multiple places, Odysseus Portable resolves it in this order:
+
+<Steps>
+  <Step title="CLI flags — highest priority">
+    Flags passed directly to the start script (e.g., `--backend=llama`) override everything else. Use these for one-off overrides without changing any file.
+  </Step>
+  <Step title="Environment variables">
+    Variables set in the shell environment (e.g., `ODYSSEUS_BACKEND=llama`) take priority over the config file and built-in defaults.
+  </Step>
+  <Step title="data/launcher_config.json">
+    Persistent settings loaded from the JSON file. Ideal for your usual working configuration on a specific machine or USB drive.
+  </Step>
+  <Step title="Built-in defaults — lowest priority">
+    Hard-coded fallback values used when no other source provides a value (`llama` backend, port `7070` / `8080` / `10086`).
+  </Step>
+</Steps>
+
+<Tip>
+  When you select a backend from the interactive prompt at startup, that choice is automatically written back to `data/launcher_config.json`. This means the prompt only appears once — on every subsequent launch the saved backend is used directly, skipping the question entirely.
+</Tip>
+
+---
+
+## Editing the File Manually
+
+<Steps>
+  <Step title="Stop Odysseus Portable">
+    Press `Ctrl+C` in the terminal where Odysseus is running to trigger a graceful shutdown before making changes.
+  </Step>
+  <Step title="Open the file in a text editor">
+    Navigate to the `data/` folder inside your project directory and open `launcher_config.json` with any plain-text editor.
+  </Step>
+  <Step title="Save and restart">
+    Save your changes, then run `start.bat` (Windows) or `./start.sh` (macOS/Linux) as usual. The updated values take effect immediately.
+  </Step>
+</Steps>
+
+<Note>
+  Port conflict detection is still active even when ports are set via the config file. If a configured port is already in use, the orchestrator automatically selects the next available port above it and logs a notice to the console.
+</Note>

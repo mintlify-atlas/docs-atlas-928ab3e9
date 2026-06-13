@@ -1,0 +1,91 @@
+---
+title: "Odysseus Portable Architecture Overview"
+sidebarTitle: "Overview"
+description: "Inside Odysseus Portable — how the orchestrator, hardware scanner, inference backends, runtime tracker, and self-healing patches fit together."
+---
+
+Odysseus Portable is built around a single Node.js orchestrator (`src/start.js`) that coordinates a collection of loosely coupled modules, each responsible for a distinct concern: detecting the host hardware, downloading and managing binaries, bootstrapping the upstream Odysseus source, tracking live subprocess PIDs, applying idempotent patches after each git pull, and finally launching the web application. Every module writes its state to the project folder itself — there is no system registry, no global config file, and no installer — which is what makes the whole workspace truly portable across Windows, macOS, and Linux from a USB drive.
+
+## Module Map
+
+| Module | File | Role |
+|--------|------|------|
+| Orchestrator | `src/start.js` | Main entry point; coordinates all other modules |
+| Hardware Scanner | `src/system.js` | Detects OS, arch, GPU (CUDA / Vulkan / Metal / CPU), RAM |
+| Downloader | `src/downloader.js` | Downloads files, extracts archives, fetches GitHub release assets |
+| llama.cpp Backend | `src/backends/llama/index.js` | Downloads and runs `llama-server`, manages proxy, auto-scales context |
+| Ollama Backend | `src/backends/ollama/index.js` | Downloads and runs Ollama, manages model store |
+| Common Backend Utils | `src/backends/common.js` | Seeds the Odysseus SQLite database with endpoint configuration |
+| Git Bootstrap | `src/bootstrap/git.js` | Clones or updates Odysseus source, manages portable Git |
+| Runtime Tracker | `src/runtime.js` | Tracks subprocess PIDs, handles graceful shutdown, prevents orphaned processes |
+
+## Startup Sequence
+
+<Steps>
+  <Step title="Clean logs, create directories">
+    The `logs/` folder is wiped of all previous log files and then re-created along with `bin/`, `models/`, and `data/`.
+  </Step>
+  <Step title="Load launcher_config.json">
+    `data/launcher_config.json` is read to pick up persisted port overrides, backend choice, and any other saved preferences. Missing keys fall back to built-in defaults.
+  </Step>
+  <Step title="Determine free ports">
+    Starting from the configured base values (web `7070`, proxy `8080`, llama `10086`), `findFreePort()` increments until a TCP connect check shows the port is unoccupied.
+  </Step>
+  <Step title="Determine backend choice">
+    Priority order: CLI flag `--backend=` → `ODYSSEUS_BACKEND` env var → saved config key → interactive prompt → default `llama`.
+  </Step>
+  <Step title="Ensure Odysseus source (ensureOdysseusSource)">
+    The Git bootstrap module checks whether `odysseus/` exists. If not, it clones from GitHub using a portable or system Git. If it does exist, it runs `git restore` on patch-managed files and then `git pull --ff-only` to pick up upstream changes.
+  </Step>
+  <Step title="Apply self-healing patches">
+    Ten targeted patch functions are called in sequence, each modifying specific lines in Odysseus Python and JavaScript source files to add portable-mode compatibility without forking the upstream project.
+  </Step>
+  <Step title="Set up Python environment">
+    Windows: a Python 3.12 embeddable ZIP is downloaded to `odysseus/bin/python/`, site-packages are enabled, and `get-pip.py` bootstraps pip. macOS/Linux: `uv` is downloaded to `odysseus/bin/uv-<os>-<arch>` and creates a virtualenv at `~/.cache/odysseus-portable/envs/<os-arch>/`.
+  </Step>
+  <Step title="Install Python dependencies">
+    Windows uses `pip install -r requirements.txt`; macOS/Linux uses `uv pip install`. Packages are verified before re-installing to keep subsequent startups fast.
+  </Step>
+  <Step title="Run odysseus/setup.py">
+    Initializes SQLite databases, creates tables, and sets up the default admin user (`admin` / `techjarves`) via `ODYSSEUS_ADMIN_USER` and `ODYSSEUS_ADMIN_PASSWORD` environment variables.
+  </Step>
+  <Step title="Configure Cookbook state">
+    `configureCookbookState()` writes or updates `odysseus/data/cookbook_state.json` to point the Local server's `modelDir`, `modelDirs`, and `downloadDir` at the portable `models/` folder.
+  </Step>
+  <Step title="Start inference backend">
+    Either `startLlamaBackend()` or `startOllamaBackend()` is called. Both return a `backend` object with `processes`, `servers`, `env`, and `llamaExeDir` fields that the orchestrator uses throughout the session.
+  </Step>
+  <Step title="Start Odysseus web app">
+    `uvicorn app:app` is spawned with the portable Python, the inference backend's binary directory on `PATH`, and the web port determined in step 3. stdout and stderr are piped to the combined log stream.
+  </Step>
+  <Step title="Wait for port, open browser">
+    `waitPort()` polls `127.0.0.1:<webPort>` every 300 ms (timeout 180 s). Once the port responds, the default system browser is opened via `start` / `open` / `xdg-open`.
+  </Step>
+  <Step title="Monitor subprocesses">
+    Each backend process and the Odysseus web process has an `exit` listener. An unexpected exit triggers `shutdown(1)`, which terminates all other processes, closes the log stream, clears `data/runtime.json`, and exits with code 1.
+  </Step>
+</Steps>
+
+## Key Design Principles
+
+- **File-based state** — Every piece of configuration and runtime state (ports, PIDs, model directories, backend choice) lives inside the project folder. Moving the folder to a different machine or drive carries the full workspace with it.
+- **Per-OS binary directories** — Binaries are stored under `bin/llama-<os>-<arch>/`, `bin/node-<os>-<arch>/`, and similar paths. A single USB drive can hold binaries for Windows, macOS, and Linux simultaneously without collisions.
+- **Crash recovery via runtime.json** — `data/runtime.json` is written on every subprocess registration and cleared only on clean shutdown. On the next launch, `cleanupPrevious()` reads this file and kills any surviving processes before starting fresh.
+- **Idempotent self-healing patches** — Patches always check for their target string before modifying a file, so they are safe to apply on every launch after a `git pull` without accumulating duplicate changes.
+
+## Architecture Detail Pages
+
+<CardGroup cols={2}>
+  <Card title="Orchestrator" icon="gears" href="/internals/orchestrator">
+    Deep dive into `src/start.js`: port management, logging, Python setup, and the shutdown sequence.
+  </Card>
+  <Card title="Hardware Detection" icon="microchip" href="/internals/hardware-detection">
+    How `detectHardware()` identifies GPU backend, VRAM, and RAM to select the right inference binary.
+  </Card>
+  <Card title="Self-Healing Patches" icon="bandage" href="/internals/self-healing-patches">
+    Every patch applied to the upstream Odysseus source on each launch, and why each one exists.
+  </Card>
+  <Card title="Git Bootstrap" icon="code-branch" href="/internals/orchestrator#git-bootstrap">
+    How the orchestrator clones and updates the Odysseus repository using portable or system Git.
+  </Card>
+</CardGroup>

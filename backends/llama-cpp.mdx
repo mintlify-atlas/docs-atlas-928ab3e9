@@ -1,0 +1,149 @@
+---
+title: "llama.cpp Backend: GGUF Inference with Auto Scaling"
+sidebarTitle: "llama.cpp"
+description: "The llama.cpp backend downloads a hardware-optimized llama-server binary and runs GGUF models with automatic GPU detection and context window scaling."
+---
+
+The llama.cpp backend is the most portable inference option in Odysseus. On first launch it calls `getLlamaCppAssets(hw)` in `src/downloader.js` to query the GitHub Releases API, selects the binary variant that matches your exact hardware — CUDA, Vulkan, Metal, or CPU — downloads and extracts it to a local `bin/` subdirectory, then starts `llama-server` and sits a lightweight Node.js HTTP proxy in front of it. Every subsequent launch reuses the cached binary, so startup is instant after the first run.
+
+<Note>
+  The llama-server binary is downloaded once and cached in `bin/llama-<os>-<arch>/` (or `bin/llama/` on Windows). Subsequent launches skip the download entirely and go straight to server startup.
+</Note>
+
+## How It Works
+
+<Steps>
+  <Step title="Hardware detection">
+    `detectHardware()` in `src/system.js` probes the platform, architecture, and GPU. It checks for an NVIDIA GPU via `nvidia-smi`, Apple Silicon via platform + arch, Vulkan via `vulkan-1.dll` on Windows or `libvulkan.so.1` on Linux, and falls back to CPU if nothing is found. The detected GPU backend (`cuda`, `vulkan`, `metal`, or `cpu`) drives every subsequent decision.
+  </Step>
+
+  <Step title="Binary selection and download">
+    `getLlamaCppAssets(hw)` queries the GitHub Releases API for the best-matching asset for your platform. On Linux CUDA systems it uses the `ai-dock/llama.cpp-cuda` release repository instead of the upstream `ggml-org/llama.cpp` repository to obtain CUDA-linked builds. The selected archive is downloaded, extracted, and the original archive file is deleted.
+  </Step>
+
+  <Step title="llama-server startup">
+    The orchestrator spawns `llama-server` with `--models-dir models/ --models-max 1 --parallel <N> --ctx-size <N> -ngl <ngl>`. GPU-accelerated systems receive `-ngl 99` to offload all layers; CPU-only systems receive `-ngl 0`. llama-server binds to port **10086**.
+  </Step>
+
+  <Step title="HTTP proxy on port 8080">
+    A Node.js HTTP proxy listens on port **8080** and forwards requests to llama-server on port 10086. The proxy rewrites model names in request bodies so that friendly identifiers (e.g. `mistral-7b`) are transparently mapped to the actual GGUF filename that llama-server expects. It also intercepts `GET /v1/models` and returns the discovered model list directly.
+  </Step>
+</Steps>
+
+## Binary Selection Logic
+
+The table below shows which release asset is downloaded for each platform and GPU combination. Windows CUDA builds also download a secondary `cudart-*` asset that provides the CUDA runtime DLLs.
+
+| Platform | GPU | Asset pattern |
+|---|---|---|
+| Windows | CUDA | `llama-*-bin-win-cuda-12.4*.zip` + `cudart-*` secondary |
+| Windows | Vulkan | `llama-*-bin-win-vulkan*.zip` |
+| Windows | CPU | `llama-*-bin-win-cpu-x64*.zip` |
+| macOS | ARM64 (Metal) | `llama-*-bin-macos-arm64*.tar.gz` |
+| macOS | x64 | `llama-*-bin-macos-x64*.tar.gz` |
+| Linux | CUDA | `ai-dock/llama.cpp-cuda` release, `*-cuda-*amd64.tar.gz` |
+| Linux | Vulkan | `llama-*-bin-ubuntu-vulkan-x64*.tar.gz` |
+| Linux | CPU ARM64 | `llama-*-bin-ubuntu-arm64*.tar.gz` |
+| Linux | CPU x64 | `llama-*-bin-ubuntu-x64*.tar.gz` |
+
+## Context Window Auto-Scaling
+
+One of the most important features of the llama.cpp backend is its automatic context window management. Rather than crashing when VRAM is exhausted, it estimates the largest context that will fit in available memory, then steps down gracefully if a request still triggers an OOM error at runtime.
+
+### The context ladder
+
+The backend tries context sizes in descending order until one fits:
+
+```text
+32768 → 24576 → 16384 → 12288 → 8192 → 4096 → 2048
+```
+
+### Auto-calculation (`chooseAutoContext`)
+
+The `chooseAutoContext` function in `src/backends/llama/index.js` estimates the right starting point on the ladder before llama-server is even started:
+
+1. **Available memory** — reads free VRAM from `nvidia-smi` for CUDA, uses total RAM minus overhead for CPU.
+2. **Model size** — scans `models/` for `.gguf` files and finds the largest one.
+3. **KV cache estimate** — applies a GB-per-4096-tokens factor based on model size.
+4. **Parallel slots** — divides the estimated max context by the number of parallel slots.
+
+The result is the largest ladder entry that fits within `usableGB`:
+
+```text
+usableGB        = availableMemory − largestModelSize − overhead
+estimatedMaxCtx = (usableGB / kvPer4096GB) × 4096 / parallelSlots
+```
+
+### Runtime OOM recovery
+
+If llama-server returns an HTTP 5xx response containing any of the strings `out of memory`, `cuda`, `failed to allocate`, `failed to create context`, or `failed to initialize the context`, the proxy calls `router.retryLowerContext()`. This terminates the running llama-server, restarts it with the next smaller context on the ladder, and retries the original request exactly once.
+
+### Overriding context size
+
+<Tip>
+  Set `ODYSSEUS_LLAMA_CTX=<size>` to pin the context window to a specific value and skip auto-calculation entirely. The backend will find the nearest ladder entry at or below your value.
+</Tip>
+
+## Parallel Request Slots
+
+By default, llama-server is started with a single parallel slot (`--parallel 1`). Increasing parallel slots allows multiple in-flight requests to be processed simultaneously, at the cost of dividing the available context window across slots.
+
+```bash
+# Allow up to 4 simultaneous requests
+ODYSSEUS_LLAMA_PARALLEL=4 ./start.sh --backend=llama
+```
+
+<Warning>
+  Increasing `ODYSSEUS_LLAMA_PARALLEL` reduces the effective per-request context window. On low-VRAM systems this may push auto-context to a smaller ladder entry.
+</Warning>
+
+## llama-server Arguments
+
+The exact command spawned by `startRouter` in `src/backends/llama/index.js`:
+
+```bash
+llama-server \
+  --port 10086 \
+  --models-dir models/ \
+  --models-max 1 \
+  --parallel <parallel> \
+  --ctx-size <ctxSize> \
+  --threads 4 \
+  -ngl <ngl>
+```
+
+`ngl` is `99` for GPU-accelerated systems (CUDA, Vulkan, Metal) and `0` for CPU-only. `parallel` and `ctxSize` are determined by `ODYSSEUS_LLAMA_PARALLEL` / `ODYSSEUS_LLAMA_CTX` or auto-calculated as described above.
+
+## Platform-Specific Setup
+
+<Accordion title="macOS — Gatekeeper quarantine removal">
+  Downloaded binaries from the internet receive a `com.apple.quarantine` extended attribute that prevents them from running. The orchestrator automatically strips this attribute immediately after extraction:
+
+  ```bash
+  xattr -r -d com.apple.quarantine "<llamaDir>"
+  ```
+
+  No manual intervention is needed. If the command fails (e.g. on a read-only filesystem), a warning is logged but the launch continues.
+</Accordion>
+
+<Accordion title="Linux CUDA — runtime library resolution">
+  Some Linux systems do not have `libcudart.so.12` installed globally. If the file is absent from the binary directory after extraction, the orchestrator automatically installs the required libraries via `uv pip`:
+
+  ```bash
+  uv pip install --target "<llamaBinDir>" \
+    nvidia-cuda-runtime-cu12 \
+    nvidia-cublas-cu12 \
+    nvidia-nccl-cu12 \
+    nvidia-cuda-nvrtc-cu12
+  ```
+
+  The relevant `.so` files are then copied from the installed Python packages into the llama binary directory so `llama-server` can find them at runtime via `LD_LIBRARY_PATH`.
+</Accordion>
+
+## Environment Variable Reference
+
+| Variable | Default | Description |
+|---|---|---|
+| `ODYSSEUS_LLAMA_CTX` | auto | Force a specific context window size (tokens). |
+| `ODYSSEUS_LLAMA_PARALLEL` | `1` | Number of parallel inference slots. |
+| `ODYSSEUS_BACKEND` | from config | Set to `llama` to select this backend. |

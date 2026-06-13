@@ -1,0 +1,154 @@
+---
+title: "System Requirements for Odysseus Portable"
+sidebarTitle: "Requirements"
+description: "Storage, hardware, and OS requirements before running Odysseus Portable — including USB drive sizing guidance and GPU compatibility."
+---
+
+Odysseus Portable is designed to run on commodity hardware without requiring a dedicated GPU, high-end CPU, or enterprise storage. That said, model inference is computationally intensive, and the experience improves substantially when hardware meets the recommended thresholds. This page covers everything you need to check before your first launch.
+
+## Supported Platforms
+
+Odysseus Portable ships native runtimes for all three major desktop operating systems across both x64 and ARM64 architectures:
+
+| Operating System | Architectures | Notes |
+|-----------------|---------------|-------|
+| **Windows** | x64, ARM64 | Bootstrapped via `start.bat` using PowerShell |
+| **macOS — Intel** | x64 | Standard llama.cpp binary; no Metal acceleration |
+| **macOS — Apple Silicon** | ARM64 | Metal-accelerated llama-server; fastest inference on Mac |
+| **Linux** | x64, ARM64 | CUDA and Vulkan detection via `nvidia-smi` and `libvulkan` |
+
+<Note>
+  Each operating system and architecture combination creates its own isolated directory under `bin/` — for example, `bin/node-linux-x64` or `bin/node-darwin-arm64` — so the same USB drive works correctly when plugged into different machines without runtime conflicts.
+</Note>
+
+---
+
+## Storage Requirements
+
+GGUF model files are large, and the bundled runtimes add further overhead. Size your drive accordingly before starting your first download.
+
+| Parameter | Minimum | Recommended |
+|-----------|---------|-------------|
+| **USB / Drive Size** | **8 GB** | **64 GB or 128 GB** (High-speed SSD / USB 3.0+) |
+| **Launcher Code & Runtimes** | ~1.5 GB | ~2.5 GB (after package compilations) |
+| **Model Capacities** | 0.5B – 3B GGUF (~1 GB – 2.5 GB) | 7B – 8B GGUF (~4.5 GB – 5 GB) |
+
+<Tip>
+  For the best experience, use a USB 3.0 or USB 3.1 SSD. Slow USB 2.0 drives can make model loading noticeably sluggish since GGUF files are memory-mapped at inference time. A fast NVMe SSD in a USB-C enclosure is ideal for 7B+ models.
+</Tip>
+
+---
+
+## RAM Requirements
+
+The model you choose to run determines how much RAM is needed. Odysseus Portable's orchestrator calculates context window sizes automatically based on available RAM, so even minimum-spec machines can run lighter models.
+
+| RAM Available | Suitable Models |
+|---------------|----------------|
+| **4 GB** (minimum) | 0.5B – 1.5B parameter GGUF models |
+| **8 GB** (recommended) | 3B – 7B parameter GGUF models |
+| **16 GB+** | 8B+ models; larger context windows |
+
+### GPU VRAM
+
+A dedicated GPU is entirely optional — CPU inference works on all platforms — but GPU acceleration dramatically improves tokens-per-second throughput:
+
+<CardGroup cols={2}>
+  <Card title="NVIDIA (CUDA)" icon="microchip">
+    Detected automatically via `nvidia-smi`. Any CUDA-capable GPU from the Pascal generation (GTX 10xx) onwards is supported. VRAM determines how many model layers can be offloaded to the GPU.
+  </Card>
+  <Card title="AMD / Intel (Vulkan)" icon="microchip">
+    Detected via `vulkan-1.dll` on Windows or `libvulkan.so.1` / `vulkaninfo` on Linux. Any Vulkan 1.1+ compatible GPU is supported, including integrated Intel graphics.
+  </Card>
+  <Card title="Apple Silicon (Metal)" icon="microchip">
+    Detected automatically on ARM64 macOS. The unified memory architecture means the GPU shares system RAM, so a 16 GB M-series Mac effectively has 16 GB of "VRAM" for model layers.
+  </Card>
+  <Card title="CPU Only" icon="cpu">
+    The universal fallback when no supported GPU is detected. Slower than GPU-accelerated inference but fully functional. Recommended to use smaller quantized models (Q4_K_M or Q2_K) for acceptable speed.
+  </Card>
+</CardGroup>
+
+---
+
+## Network Requirements
+
+<Accordion title="First run (internet required)">
+  An active internet connection is required on first launch to download the following assets:
+
+  - **Portable Node.js 22.16.0** — downloaded from `nodejs.org`
+  - **Portable Python 3.12** — downloaded via `astral uv` (macOS/Linux) or the official embedded zip (Windows)
+  - **llama-server binary** — a hardware-optimized release asset matched to your OS and GPU backend
+  - **Odysseus web application** — cloned from GitHub into `odysseus/`
+  - **Python package dependencies** — installed into the portable Python environment from `requirements.txt`
+
+  All of these are cached locally after first run. The total download volume is approximately 1.5 GB for runtimes alone, plus your chosen model file(s).
+</Accordion>
+
+<Accordion title="Subsequent launches (offline capable)">
+  After the initial bootstrap completes, Odysseus Portable runs fully offline. On startup, the orchestrator will attempt a `git pull --ff-only` on the Odysseus source directory to pick up upstream updates, but this is non-blocking — the launch proceeds normally if there is no network connection.
+</Accordion>
+
+<Accordion title="Hugging Face credentials (gated models only)">
+  No Hugging Face account is required to download public models. If you want to download private or gated models (e.g., Meta Llama with a license agreement), create a `.env` file inside the `odysseus/` directory:
+
+  ```env
+  # odysseus/.env
+  HUGGING_FACE_HUB_TOKEN=hf_yourReadTokenHere
+  ```
+
+  The orchestrator also reads `HF_TOKEN` and `HUGGING_FACE_HUB_TOKEN` from your shell environment, and falls back to the cached token at `~/.cache/huggingface/token` if present.
+</Accordion>
+
+---
+
+## Software Prerequisites
+
+Odysseus Portable bootstraps all its own runtimes, so the list of required pre-installed tools is intentionally minimal:
+
+| Platform | Requirement | Purpose |
+|----------|-------------|---------|
+| **macOS / Linux** | `curl` **or** `wget` | Downloads the portable Node.js tarball during bootstrap |
+| **Windows** | PowerShell (built-in) | Runs `scripts/bootstrap-node.ps1` to download Node.js |
+| **All platforms** | Git (optional) | Only needed if cloning the repo; ZIP download works too |
+
+<Note>
+  `curl` ships by default on macOS (since 10.15 Catalina) and on most Linux distributions. If neither `curl` nor `wget` is available on your Linux system, install one via your package manager before running `start.sh`. No other system packages are required.
+</Note>
+
+---
+
+## Filesystem Notes
+
+<Accordion title="exFAT and FAT32 drives">
+  exFAT and FAT32 file systems do not support symbolic links, which some Node.js packages create during installation. Odysseus Portable detects this automatically: when the target filesystem does not support symlinks, the launcher falls back to hardlinks or file copy operations. This is handled transparently — no user action is required.
+
+  That said, FAT32 has a 4 GB per-file size limit, which prevents storing 7B+ GGUF models on FAT32 partitions. Use exFAT or a native filesystem (NTFS, APFS, ext4) for larger models.
+</Accordion>
+
+<Accordion title="Recommended filesystems">
+  For the best compatibility and performance:
+
+  | Filesystem | Platform | Notes |
+  |------------|----------|-------|
+  | **NTFS** | Windows | Full symlink support; required for 4 GB+ model files |
+  | **APFS** | macOS | Default on Apple SSDs; full symlink and metadata support |
+  | **ext4** | Linux | Standard Linux filesystem; full symlink support |
+  | **exFAT** | Cross-platform | Good for USB drives used on multiple OSes; no symlinks but launcher handles it |
+</Accordion>
+
+<Accordion title="Isolated per-OS bin directories">
+  The `bin/` directory contains separate subdirectories for each OS/architecture combination the drive has been used on. For example:
+
+  ```text
+  bin/
+  ├── node-darwin-arm64/     # macOS Apple Silicon Node.js runtime
+  ├── node-darwin-x64/       # macOS Intel Node.js runtime
+  ├── node-linux-x64/        # Linux x64 Node.js runtime
+  ├── node/                  # Windows Node.js runtime
+  ├── llama-macos-arm64/     # macOS Apple Silicon llama-server
+  ├── llama-linux-x64/       # Linux x64 llama-server
+  └── llama/                 # Windows llama-server
+  ```
+
+  Each platform's entry is written and read only by that platform, so running the same USB drive on a Windows laptop and then a Linux workstation never causes binary conflicts.
+</Accordion>
